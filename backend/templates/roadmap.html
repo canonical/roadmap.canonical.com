@@ -45,15 +45,29 @@
     <button type="button" class="p-button" id="clear-btn" onclick="window.location.href='/'">Clear</button>
   </form>
 
-  {# ── Legend ──────────────────────────────────────────────────── #}
-  <div class="u-sv1" style="display:flex;gap:1rem;flex-wrap:wrap;font-size:.875rem;">
-    <span><span class="color-cell color-cell--green">C</span> Completed</span>
-    <span><span class="color-cell color-cell--green">&nbsp;</span> In Progress</span>
-    <span><span class="color-cell color-cell--orange">&nbsp;</span> At Risk</span>
-    <span><span class="color-cell color-cell--red">&nbsp;</span> Rejected / Excluded</span>
-    <span><span class="color-cell color-cell--blue">&nbsp;</span> Added</span>
-    <span><span class="color-cell color-cell--black">&nbsp;</span> Dropped</span>
-    <span><span class="color-cell color-cell--white">&nbsp;</span> Unknown</span>
+  {# ── Legend (clickable filters) ───────────────────────────────── #}
+  <div id="legend-bar" class="u-sv1" style="display:flex;gap:1rem;flex-wrap:wrap;font-size:.875rem;align-items:center;">
+    <span class="legend-filter" data-health="completed">
+      <span class="color-cell color-cell--green">C</span> Completed
+    </span>
+    <span class="legend-filter" data-health="in-progress">
+      <span class="color-cell color-cell--green">&nbsp;</span> In Progress
+    </span>
+    <span class="legend-filter" data-health="at-risk">
+      <span class="color-cell color-cell--orange">&nbsp;</span> At Risk
+    </span>
+    <span class="legend-filter" data-health="rejected">
+      <span class="color-cell color-cell--red">&nbsp;</span> Rejected / Excluded
+    </span>
+    <span class="legend-filter" data-health="added">
+      <span class="color-cell color-cell--blue">&nbsp;</span> Added
+    </span>
+    <span class="legend-filter" data-health="dropped">
+      <span class="color-cell color-cell--black">&nbsp;</span> Dropped
+    </span>
+    <span class="legend-filter" data-health="unknown">
+      <span class="color-cell color-cell--white">&nbsp;</span> Unknown
+    </span>
     <span><span class="carry-over-badge">2</span> Carry-over count</span>
   </div>
 
@@ -91,7 +105,24 @@
           </thead>
           <tbody>
             {% for item in items %}
-            <tr>
+            {% set health_color = item.color_status.health.color if item.color_status and item.color_status.health else 'white' %}
+            {% set health_label = item.color_status.health.get('label', '') if item.color_status and item.color_status.health else '' %}
+            {% if health_color == 'green' and health_label == 'C' %}
+              {% set health_id = 'completed' %}
+            {% elif health_color == 'green' %}
+              {% set health_id = 'in-progress' %}
+            {% elif health_color == 'orange' %}
+              {% set health_id = 'at-risk' %}
+            {% elif health_color == 'red' %}
+              {% set health_id = 'rejected' %}
+            {% elif health_color == 'blue' %}
+              {% set health_id = 'added' %}
+            {% elif health_color == 'black' %}
+              {% set health_id = 'dropped' %}
+            {% else %}
+              {% set health_id = 'unknown' %}
+            {% endif %}
+            <tr data-health="{{ health_id }}">
               <td>
                 {% if item.color_status and item.color_status.carry_over %}
                   {% if item.color_status.carry_over.count > 1 %}
@@ -203,5 +234,68 @@
   document.getElementById('clear-btn').addEventListener('click', function() {
     clearing = true;
   });
+
+  // ── Legend health-status filter ──────────────────────────────
+  (function() {
+    var activeFilters = new Set();
+    var legendItems = document.querySelectorAll('.legend-filter[data-health]');
+    var allRows = document.querySelectorAll('tr[data-health]');
+
+    function applyFilter() {
+      var filtering = activeFilters.size > 0;
+
+      // Toggle legend item styling
+      legendItems.forEach(function(el) {
+        var id = el.getAttribute('data-health');
+        if (filtering) {
+          el.classList.toggle('is-active', activeFilters.has(id));
+          el.classList.toggle('is-dimmed', !activeFilters.has(id));
+        } else {
+          el.classList.remove('is-active', 'is-dimmed');
+        }
+      });
+
+      // Show/hide table rows
+      allRows.forEach(function(row) {
+        if (!filtering || activeFilters.has(row.getAttribute('data-health'))) {
+          row.style.display = '';
+        } else {
+          row.style.display = 'none';
+        }
+      });
+
+      // Update item counts in objective headers
+      document.querySelectorAll('.product-column').forEach(function(col) {
+        var rows = col.querySelectorAll('tr[data-health]');
+        var visible = 0;
+        rows.forEach(function(r) { if (r.style.display !== 'none') visible++; });
+        var badge = col.querySelector('h4 .p-badge');
+        if (badge) badge.textContent = visible;
+
+        // Hide entire objective section if no items visible
+        col.style.display = visible === 0 ? 'none' : '';
+      });
+
+      // Hide entire cycle section if all objectives hidden
+      document.querySelectorAll('.cycle-section').forEach(function(sec) {
+        var cols = sec.querySelectorAll('.product-column');
+        var anyVisible = false;
+        cols.forEach(function(c) { if (c.style.display !== 'none') anyVisible = true; });
+        sec.style.display = anyVisible ? '' : 'none';
+      });
+    }
+
+    legendItems.forEach(function(el) {
+      el.addEventListener('click', function() {
+        var id = el.getAttribute('data-health');
+        if (activeFilters.has(id)) {
+          activeFilters.delete(id);
+        } else {
+          activeFilters.add(id);
+        }
+        applyFilter();
+      });
+    });
+  })();
 </script>
 {% endblock %}
