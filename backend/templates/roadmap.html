@@ -92,7 +92,11 @@
             <tr>
               <td>
                 {% if item.color_status and item.color_status.carry_over %}
-                  <span class="carry-over-badge">{{ item.color_status.carry_over.count }}</span>
+                  {% if item.color_status.carry_over.count > 1 %}
+                    <span class="carry-over-badge">{{ item.color_status.carry_over.count }}</span>
+                  {% else %}
+                    <span class="carry-over-badge">&nbsp;</span>
+                  {% endif %}
                 {% endif %}
               </td>
               <td>
