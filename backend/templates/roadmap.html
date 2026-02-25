@@ -139,9 +139,9 @@
                   </span>
                 {% endif %}
               </td>
-              <td class="summary-cell" title="{{ item.title }}">
-                {{ item.title | truncate(90, True, '…') }}
-                <a href="{{ item.url }}" target="_blank" rel="noopener" title="{{ item.jira_key }}" class="jira-link">
+              <td class="summary-cell">
+                <a href="{{ item.url }}" target="_blank" rel="noopener" class="jira-link summary-link">
+                  {{ item.title | truncate(90, True, '…') }}
                   <i class="p-icon--external-link"></i>
                 </a>
               </td>
