@@ -24,6 +24,35 @@ logger = logging.getLogger(__name__)
 # Phase 1 — pull from Jira
 # ---------------------------------------------------------------------------
 
+
+def _build_jql() -> str:
+    """Build the JQL query dynamically from product_jira_source projects.
+
+    Reads all distinct ``jira_project_key`` values from the ``product_jira_source``
+    table and combines them with the configured ``jql_filter`` setting.
+
+    Returns a JQL string like:
+        ``project in (JUJU, KU, DPE) AND issuetype = Epic AND labels in (26.04, 26.10)``
+    """
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT DISTINCT jira_project_key FROM product_jira_source ORDER BY jira_project_key")
+            project_keys = [row[0] for row in cur.fetchall()]
+
+    if not project_keys:
+        raise RuntimeError(
+            "No Jira project keys found in product_jira_source table. "
+            "Add at least one product_jira_source row before syncing."
+        )
+
+    projects_clause = "project in ({})".format(", ".join(project_keys))
+    jql = projects_clause
+    if settings.jql_filter:
+        jql += f" AND {settings.jql_filter}"
+
+    return jql
+
+
 def sync_jira_data() -> int:
     """Fetch issues matching the configured JQL and store raw JSON.
 
@@ -32,8 +61,9 @@ def sync_jira_data() -> int:
     """
     logger.info("Connecting to Jira at %s as %s", settings.jira_url, settings.jira_username)
     jira = JIRA(server=settings.jira_url, basic_auth=(settings.jira_username, settings.jira_pat))
-    logger.info("Running JQL: %s", settings.jql_query)
-    issues = jira.search_issues(settings.jql_query, maxResults=False)
+    jql = _build_jql()
+    logger.info("Running JQL: %s", jql)
+    issues = jira.search_issues(jql, maxResults=False)
     logger.info("Fetched %d issues from Jira", len(issues))
 
     if not issues:

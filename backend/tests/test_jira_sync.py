@@ -2,8 +2,10 @@
 
 import json
 
+import pytest
+
 from src.database import get_db_connection
-from src.jira_sync import JiraSourceRule, _match_issue_to_product, process_raw_jira_data
+from src.jira_sync import JiraSourceRule, _build_jql, _match_issue_to_product, process_raw_jira_data
 
 
 def _insert_raw_issue(jira_key: str, fields: dict) -> None:
@@ -301,3 +303,99 @@ def test_match_first_rule_wins():
     assert _match_issue_to_product("PROJ", [], ["team-a"], [], rules, fallback_product_id=99) == 1
     # First rule doesn't match, second does
     assert _match_issue_to_product("PROJ", [], ["team-b"], [], rules, fallback_product_id=99) == 2
+
+
+# ---------------------------------------------------------------------------
+# Unit tests for _build_jql
+# ---------------------------------------------------------------------------
+
+
+def test_build_jql_with_projects():
+    """JQL is built from product_jira_source project keys + jql_filter."""
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute("INSERT INTO product (name, department) VALUES ('P1', 'D1') RETURNING id")
+        p1_id = cur.fetchone()[0]
+        cur.execute("INSERT INTO product (name, department) VALUES ('P2', 'D2') RETURNING id")
+        p2_id = cur.fetchone()[0]
+        cur.execute(
+            "INSERT INTO product_jira_source (product_id, jira_project_key) VALUES (%s, 'DPE'), (%s, 'JUJU')",
+            (p1_id, p2_id),
+        )
+        conn.commit()
+
+    jql = _build_jql()
+    # Projects are sorted alphabetically
+    assert jql.startswith("project in (DPE, JUJU)")
+    assert "issuetype = Epic" in jql
+
+
+def test_build_jql_deduplicates_projects():
+    """Duplicate project keys across rules appear only once in the JQL."""
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute("INSERT INTO product (name, department) VALUES ('PA', 'DA') RETURNING id")
+        pa_id = cur.fetchone()[0]
+        cur.execute("INSERT INTO product (name, department) VALUES ('PB', 'DB') RETURNING id")
+        pb_id = cur.fetchone()[0]
+        # Both products map to the same Jira project
+        cur.execute(
+            "INSERT INTO product_jira_source (product_id, jira_project_key) VALUES (%s, 'KU'), (%s, 'KU')",
+            (pa_id, pb_id),
+        )
+        conn.commit()
+
+    jql = _build_jql()
+    assert jql.startswith("project in (KU)")
+
+
+def test_build_jql_no_projects_raises():
+    """_build_jql raises RuntimeError when no project keys are configured."""
+    with pytest.raises(RuntimeError, match="No Jira project keys found"):
+        _build_jql()
+
+
+def test_build_jql_respects_jql_filter(monkeypatch):
+    """The jql_filter setting is appended to the project clause."""
+    import src.jira_sync as jira_sync_mod
+    import src.settings as settings_mod
+    from src.settings import Settings
+
+    monkeypatch.setenv("JQL_FILTER", "issuetype = Epic AND labels in (26.04, 26.10)")
+    new_settings = Settings()
+    settings_mod.settings = new_settings
+    monkeypatch.setattr(jira_sync_mod, "settings", new_settings)
+
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute("INSERT INTO product (name, department) VALUES ('Px', 'Dx') RETURNING id")
+        pid = cur.fetchone()[0]
+        cur.execute(
+            "INSERT INTO product_jira_source (product_id, jira_project_key) VALUES (%s, 'ABC')",
+            (pid,),
+        )
+        conn.commit()
+
+    jql = _build_jql()
+    assert jql == "project in (ABC) AND issuetype = Epic AND labels in (26.04, 26.10)"
+
+
+def test_build_jql_empty_filter(monkeypatch):
+    """When jql_filter is empty, only the project clause is returned."""
+    import src.jira_sync as jira_sync_mod
+    import src.settings as settings_mod
+    from src.settings import Settings
+
+    monkeypatch.setenv("JQL_FILTER", "")
+    new_settings = Settings()
+    settings_mod.settings = new_settings
+    monkeypatch.setattr(jira_sync_mod, "settings", new_settings)
+
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute("INSERT INTO product (name, department) VALUES ('Py', 'Dy') RETURNING id")
+        pid = cur.fetchone()[0]
+        cur.execute(
+            "INSERT INTO product_jira_source (product_id, jira_project_key) VALUES (%s, 'XYZ')",
+            (pid,),
+        )
+        conn.commit()
+
+    jql = _build_jql()
+    assert jql == "project in (XYZ)"

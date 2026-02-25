@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     jira_url: str = "https://warthogs.atlassian.net"
     jira_username: str = ""
     jira_pat: str = ""
-    jql_query: str = 'project = "PLACEHOLDER" AND issuetype = Epic'
+    jql_filter: str = "issuetype = Epic"
 
     model_config = {"env_file": str(_ENV_FILE), "extra": "ignore"}
 

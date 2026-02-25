@@ -23,7 +23,7 @@ This spins up PostgreSQL 16 on port **5432** (user: `roadmap`, password: `roadma
 ```bash
 cp backend/.env.example backend/.env
 # Edit backend/.env with your Jira credentials:
-#   JIRA_URL, JIRA_USERNAME, JIRA_PAT, JQL_QUERY
+#   JIRA_URL, JIRA_USERNAME, JIRA_PAT, JQL_FILTER
 ```
 
 ### 3. Install dependencies & run the API
