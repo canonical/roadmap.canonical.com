@@ -137,6 +137,29 @@
     .p-navigation__logo-title {
       align-self: flex-end;
     }
+
+    /* ── clickable legend filters ───────────────────────────────── */
+    .legend-filter {
+      display: inline-flex;
+      align-items: center;
+      gap: .25rem;
+      cursor: pointer;
+      padding: .15rem .4rem;
+      border-radius: .25rem;
+      border: 2px solid transparent;
+      transition: opacity .15s, border-color .15s;
+      user-select: none;
+    }
+    .legend-filter:hover {
+      border-color: #999;
+    }
+    .legend-filter.is-active {
+      border-color: #007aa6;
+      background: rgba(0, 122, 166, .08);
+    }
+    .legend-filter.is-dimmed {
+      opacity: .35;
+    }
   </style>
 
   {% block head %}{% endblock %}
