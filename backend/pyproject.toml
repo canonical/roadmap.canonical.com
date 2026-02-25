@@ -1,0 +1,30 @@
+[project]
+name = "roadmap-backend"
+version = "0.1.0"
+description = "FastAPI backend for roadmap visualization — syncs Jira epics to PostgreSQL"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115,<1",
+    "uvicorn[standard]>=0.29,<1",
+    "pydantic>=2.10,<3",
+    "pydantic-settings>=2.7,<3",
+    "httpx>=0.28,<1",
+    "jira>=3.10,<4",
+    "psycopg2-binary>=2.9,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<9",
+    "ruff>=0.9,<1",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
