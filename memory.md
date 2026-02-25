@@ -194,3 +194,46 @@
 - Seed real products via API
 - After re-sync, re-process to populate product assignments
 - Consider admin UI for product management (currently API-only)
+
+---
+
+## 2026-02-25 — Daily snapshots for biweekly change reports
+
+### What was built
+- **`roadmap_snapshot` table** — stores a full copy of every `roadmap_item` once per day,
+  with denormalized product name/department and extracted health color.
+- **`take_daily_snapshot()`** in `jira_sync.py` — called automatically after each sync.
+  Idempotent: if today's snapshot already exists, it's a no-op (safe for hourly syncs).
+- **`GET /api/v1/snapshots`** — lists all available snapshot dates with item counts.
+- **`GET /api/v1/snapshots/diff?from_date=&to_date=`** — compares two snapshots and returns:
+  - `turned_red` — items whose color changed to red
+  - `color_changes` — all color changes
+  - `disappeared` — items removed from the roadmap
+  - `appeared` — new items added to the roadmap
+- **12 new tests** in `test_snapshots.py` covering snapshot creation, idempotency,
+  product info capture, and all four diff categories.
+
+### Key decisions
+1. **Daily snapshots over change events** — simpler to implement and query.
+   With 2,500 items and 1 snapshot/day, that's ~912K rows/year (~a few MB). Trivial for PostgreSQL.
+2. **Idempotent per day** — only one snapshot per calendar day, regardless of how many
+   syncs run. Prevents bloat from hourly syncs.
+3. **Denormalized product info** — product name and department are copied into the snapshot
+   so reports remain accurate even if products are renamed or deleted later.
+4. **Health color extracted to plain column** — `color_status->'health'->>'color'` is stored
+   as `VARCHAR(32)` for easy SQL comparisons in diff queries.
+5. **No FK to product** — snapshot rows are self-contained historical records.
+
+### Files created
+- `backend/tests/test_snapshots.py` — 12 tests for snapshot + diff logic
+
+### Files modified
+- `backend/src/db_schema.sql` — added `roadmap_snapshot` table + indexes
+- `backend/src/jira_sync.py` — added `take_daily_snapshot()` function
+- `backend/src/api.py` — wired snapshot into sync, added `/api/v1/snapshots` and `/api/v1/snapshots/diff`
+- `backend/tests/conftest.py` — added `roadmap_snapshot` to teardown DROP
+- `README.md` — documented snapshot architecture, API endpoints, query examples
+- `memory.md` — this entry
+
+### Test status
+- **67/67 tests pass, 0 new lint errors**

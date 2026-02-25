@@ -80,6 +80,27 @@ BEGIN
     END IF;
 END $$;
 
+-- Daily snapshots of roadmap_item for change-tracking reports
+CREATE TABLE IF NOT EXISTS roadmap_snapshot (
+    id              SERIAL       PRIMARY KEY,
+    snapshot_date   DATE         NOT NULL,
+    jira_key        VARCHAR(64)  NOT NULL,
+    title           VARCHAR(512) NOT NULL,
+    status          VARCHAR(64)  NOT NULL,
+    color           VARCHAR(32),
+    release         VARCHAR(64),
+    tags            TEXT[],
+    product_id      INTEGER,
+    product_name    VARCHAR(128),
+    department      VARCHAR(128),
+    parent_key      VARCHAR(64),
+    parent_summary  VARCHAR(512),
+    UNIQUE (snapshot_date, jira_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_snapshot_date ON roadmap_snapshot(snapshot_date);
+CREATE INDEX IF NOT EXISTS idx_snapshot_jira_key ON roadmap_snapshot(jira_key);
+
 -- Seed a catch-all product so FK never fails
 INSERT INTO product (name, department)
 VALUES ('Uncategorized', 'Unassigned')
