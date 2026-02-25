@@ -5,6 +5,13 @@ import json
 from src.database import get_db_connection
 
 
+def _get_uncategorized_id():
+    """Return the id of the seeded 'Uncategorized' product."""
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT id FROM product WHERE name = 'Uncategorized'")
+        return cur.fetchone()[0]
+
+
 def test_roadmap_empty(client):
     """Empty DB returns an empty list."""
     resp = client.get("/api/v1/roadmap")
@@ -17,17 +24,18 @@ def test_roadmap_empty(client):
 def test_roadmap_with_data(client):
     """Inserted row shows up in the roadmap response."""
     color = {"health": {"color": "green"}, "carry_over": None}
+    uncat_id = _get_uncategorized_id()
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO roadmap_item
-                    (jira_key, title, description, status, release, tags, product, color_status, url)
+                    (jira_key, title, description, status, release, tags, product_id, color_status, url)
                 VALUES
                     ('TEST-1', 'Test Epic', 'A description', 'In Progress', '25.10',
-                     ARRAY['roadmap'], 'Uncategorized', %s, 'http://jira/TEST-1')
+                     ARRAY['roadmap'], %s, %s, 'http://jira/TEST-1')
                 """,
-                (json.dumps(color),),
+                (uncat_id, json.dumps(color)),
             )
         conn.commit()
 
@@ -41,16 +49,17 @@ def test_roadmap_with_data(client):
 
 def test_roadmap_filter_by_status(client):
     """Filtering by status returns only matching items."""
+    uncat_id = _get_uncategorized_id()
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             for key, st in [("A-1", "Done"), ("A-2", "In Progress")]:
                 cur.execute(
                     """
                     INSERT INTO roadmap_item
-                        (jira_key, title, status, product, url)
-                    VALUES (%s, %s, %s, 'Uncategorized', '')
+                        (jira_key, title, status, product_id, url)
+                    VALUES (%s, %s, %s, %s, '')
                     """,
-                    (key, f"Epic {key}", st),
+                    (key, f"Epic {key}", st, uncat_id),
                 )
         conn.commit()
 
@@ -75,6 +84,125 @@ def test_status_endpoint(client):
 
 
 # ---------------------------------------------------------------------------
+# Product CRUD tests
+# ---------------------------------------------------------------------------
+
+def test_list_products(client):
+    """GET /api/v1/products returns the seeded Uncategorized product."""
+    resp = client.get("/api/v1/products")
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert any(p["name"] == "Uncategorized" for p in data)
+
+
+def test_create_product(client):
+    """POST /api/v1/products creates a product with Jira sources."""
+    resp = client.post("/api/v1/products", json={
+        "name": "MAAS",
+        "department": "Engineering",
+        "jira_sources": [
+            {
+                "jira_project_key": "MAAS",
+                "include_components": ["UI", "API"],
+                "exclude_components": None,
+                "include_labels": None,
+                "exclude_labels": None,
+                "include_teams": ["MAAS-team"],
+                "exclude_teams": None,
+            },
+            {
+                "jira_project_key": "SNAP",
+                "include_labels": ["maas-related"],
+            },
+        ],
+    })
+    assert resp.status_code == 201
+    product = resp.json()["data"]
+    assert product["name"] == "MAAS"
+    assert product["department"] == "Engineering"
+    assert len(product["jira_sources"]) == 2
+    assert product["jira_sources"][0]["jira_project_key"] == "MAAS"
+    assert product["jira_sources"][0]["include_components"] == ["UI", "API"]
+    assert product["jira_sources"][0]["include_teams"] == ["MAAS-team"]
+    assert product["jira_sources"][1]["jira_project_key"] == "SNAP"
+    assert product["jira_sources"][1]["include_labels"] == ["maas-related"]
+
+
+def test_get_product(client):
+    """GET /api/v1/products/{id} returns the product."""
+    create = client.post("/api/v1/products", json={"name": "Juju", "department": "Infra"})
+    pid = create.json()["data"]["id"]
+
+    resp = client.get(f"/api/v1/products/{pid}")
+    assert resp.status_code == 200
+    assert resp.json()["data"]["name"] == "Juju"
+
+
+def test_get_product_not_found(client):
+    """GET /api/v1/products/999999 returns 404."""
+    resp = client.get("/api/v1/products/999999")
+    assert resp.status_code == 404
+
+
+def test_update_product(client):
+    """PUT /api/v1/products/{id} replaces product details and sources."""
+    create = client.post("/api/v1/products", json={
+        "name": "LXD",
+        "department": "Containers",
+        "jira_sources": [{"jira_project_key": "LXD"}],
+    })
+    pid = create.json()["data"]["id"]
+
+    resp = client.put(f"/api/v1/products/{pid}", json={
+        "name": "LXD",
+        "department": "Containers",
+        "jira_sources": [
+            {"jira_project_key": "LXD", "exclude_components": ["CI"]},
+            {"jira_project_key": "WD", "include_components": ["Anbox/LXD Tribe"]},
+        ],
+    })
+    assert resp.status_code == 200
+    product = resp.json()["data"]
+    assert len(product["jira_sources"]) == 2
+    assert product["jira_sources"][0]["exclude_components"] == ["CI"]
+    assert product["jira_sources"][1]["include_components"] == ["Anbox/LXD Tribe"]
+
+
+def test_delete_product(client):
+    """DELETE /api/v1/products/{id} removes the product."""
+    create = client.post("/api/v1/products", json={"name": "Deleteme"})
+    pid = create.json()["data"]["id"]
+
+    resp = client.delete(f"/api/v1/products/{pid}")
+    assert resp.status_code == 204
+
+    resp = client.get(f"/api/v1/products/{pid}")
+    assert resp.status_code == 404
+
+
+def test_delete_product_unlinks_roadmap_items(client):
+    """Deleting a product sets product_id to NULL on linked roadmap items, not deleting them."""
+    create = client.post("/api/v1/products", json={"name": "Temp"})
+    pid = create.json()["data"]["id"]
+
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO roadmap_item (jira_key, title, status, product_id, url) "
+            "VALUES ('DEL-1', 'Keep me', 'Open', %s, '')",
+            (pid,),
+        )
+        conn.commit()
+
+    client.delete(f"/api/v1/products/{pid}")
+
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT product_id FROM roadmap_item WHERE jira_key = 'DEL-1'")
+        row = cur.fetchone()
+    assert row is not None
+    assert row[0] is None
+
+
+# ---------------------------------------------------------------------------
 # HTML page tests
 # ---------------------------------------------------------------------------
 
@@ -89,17 +217,18 @@ def test_roadmap_page_empty(client):
 def test_roadmap_page_with_data(client):
     """Items with cycle labels appear in the rendered HTML grouped by cycle then product."""
     color = json.dumps({"health": {"color": "green"}, "carry_over": None})
+    uncat_id = _get_uncategorized_id()
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO roadmap_item
-                    (jira_key, title, status, tags, product, color_status, url)
+                    (jira_key, title, status, tags, product_id, color_status, url)
                 VALUES
                     ('HTML-1', 'Render test', 'In Progress', ARRAY['25.10'],
-                     'Uncategorized', %s, 'http://jira/HTML-1')
+                     %s, %s, 'http://jira/HTML-1')
                 """,
-                (color,),
+                (uncat_id, color),
             )
         conn.commit()
 
@@ -114,16 +243,17 @@ def test_roadmap_page_with_data(client):
 def test_roadmap_page_hides_items_without_cycle(client):
     """Items that have no XX.XX cycle label are not shown."""
     color = json.dumps({"health": {"color": "white"}, "carry_over": None})
+    uncat_id = _get_uncategorized_id()
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO roadmap_item
-                    (jira_key, title, status, tags, product, color_status, url)
+                    (jira_key, title, status, tags, product_id, color_status, url)
                 VALUES
-                    ('NO-1', 'No cycle', 'Open', ARRAY['SomeTag'], 'Uncategorized', %s, '')
+                    ('NO-1', 'No cycle', 'Open', ARRAY['SomeTag'], %s, %s, '')
                 """,
-                (color,),
+                (uncat_id, color),
             )
         conn.commit()
 
@@ -135,17 +265,18 @@ def test_roadmap_page_hides_items_without_cycle(client):
 def test_roadmap_page_item_in_multiple_cycles(client):
     """An item with two cycle labels appears under both cycle headings."""
     color = json.dumps({"health": {"color": "green"}, "carry_over": {"color": "purple", "count": 1}})
+    uncat_id = _get_uncategorized_id()
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO roadmap_item
-                    (jira_key, title, status, tags, product, color_status, url)
+                    (jira_key, title, status, tags, product_id, color_status, url)
                 VALUES
                     ('MULTI-1', 'Multi-cycle', 'In Progress', ARRAY['25.10', '26.04'],
-                     'Uncategorized', %s, 'http://jira/MULTI-1')
+                     %s, %s, 'http://jira/MULTI-1')
                 """,
-                (color,),
+                (uncat_id, color),
             )
         conn.commit()
 
@@ -160,16 +291,17 @@ def test_roadmap_page_item_in_multiple_cycles(client):
 def test_roadmap_page_filter_by_cycle(client):
     """Cycle filter shows only the selected cycle's items."""
     color = json.dumps({"health": {"color": "green"}, "carry_over": None})
+    uncat_id = _get_uncategorized_id()
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             for key, tags in [("CY-1", ["25.10"]), ("CY-2", ["26.04"])]:
                 cur.execute(
                     """
                     INSERT INTO roadmap_item
-                        (jira_key, title, status, tags, product, color_status, url)
-                    VALUES (%s, %s, 'Open', %s, 'Uncategorized', %s, '')
+                        (jira_key, title, status, tags, product_id, color_status, url)
+                    VALUES (%s, %s, 'Open', %s, %s, %s, '')
                     """,
-                    (key, f"Epic {key}", tags, color),
+                    (key, f"Epic {key}", tags, uncat_id, color),
                 )
         conn.commit()
 
@@ -184,19 +316,23 @@ def test_roadmap_page_filter_by_cycle(client):
 def test_roadmap_page_filter_by_product(client):
     """Filtering by product shows only matching items."""
     color = json.dumps({"health": {"color": "green"}, "carry_over": None})
+    uncat_id = _get_uncategorized_id()
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO product (name, primary_project) VALUES ('Juju', 'JUJU') ON CONFLICT DO NOTHING"
+                "INSERT INTO product (name, department) VALUES ('Juju', 'Engineering') "
+                "ON CONFLICT (name) DO NOTHING"
             )
-            for key, prod in [("F-1", "Juju"), ("F-2", "Uncategorized")]:
+            cur.execute("SELECT id FROM product WHERE name = 'Juju'")
+            juju_id = cur.fetchone()[0]
+            for key, pid in [("F-1", juju_id), ("F-2", uncat_id)]:
                 cur.execute(
                     """
                     INSERT INTO roadmap_item
-                        (jira_key, title, status, tags, product, color_status, url)
+                        (jira_key, title, status, tags, product_id, color_status, url)
                     VALUES (%s, %s, 'Open', ARRAY['26.04'], %s, %s, '')
                     """,
-                    (key, f"Epic {key}", prod, color),
+                    (key, f"Epic {key}", pid, color),
                 )
         conn.commit()
 

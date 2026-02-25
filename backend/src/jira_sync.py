@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass, field
 
 from jira import JIRA
 
@@ -58,14 +59,102 @@ def sync_jira_data() -> int:
 
 
 # ---------------------------------------------------------------------------
-# Phase 2 — process raw → roadmap_item
+# Product mapping helpers
 # ---------------------------------------------------------------------------
 
-def _get_product_mapping(cursor) -> dict[str, str]:
-    """Return {jira_project_key: product_name} from the product table."""
-    cursor.execute("SELECT name, primary_project FROM product")
-    return {row[1]: row[0] for row in cursor.fetchall()}
+@dataclass
+class JiraSourceRule:
+    """A single Jira project → product mapping rule with optional filters."""
 
+    product_id: int
+    jira_project_key: str
+    include_components: list[str] = field(default_factory=list)
+    exclude_components: list[str] = field(default_factory=list)
+    include_labels: list[str] = field(default_factory=list)
+    exclude_labels: list[str] = field(default_factory=list)
+    include_teams: list[str] = field(default_factory=list)
+    exclude_teams: list[str] = field(default_factory=list)
+
+
+def _load_source_rules(cursor) -> list[JiraSourceRule]:
+    """Load all product_jira_source rows into structured rules."""
+    cursor.execute(
+        "SELECT product_id, jira_project_key, include_components, "
+        "       exclude_components, include_labels, exclude_labels, "
+        "       include_teams, exclude_teams "
+        "FROM product_jira_source"
+    )
+    rules = []
+    for row in cursor.fetchall():
+        rules.append(JiraSourceRule(
+            product_id=row[0],
+            jira_project_key=row[1],
+            include_components=row[2] or [],
+            exclude_components=row[3] or [],
+            include_labels=row[4] or [],
+            exclude_labels=row[5] or [],
+            include_teams=row[6] or [],
+            exclude_teams=row[7] or [],
+        ))
+    return rules
+
+
+def _get_uncategorized_product_id(cursor) -> int:
+    """Return the id of the 'Uncategorized' product (always exists via schema seed)."""
+    cursor.execute("SELECT id FROM product WHERE name = 'Uncategorized'")
+    row = cursor.fetchone()
+    return row[0]
+
+
+def _match_issue_to_product(
+    jira_project_key: str,
+    issue_components: list[str],
+    issue_labels: list[str],
+    issue_teams: list[str],
+    rules: list[JiraSourceRule],
+    fallback_product_id: int,
+) -> int:
+    """Determine which product_id an issue belongs to based on source rules.
+
+    Matching logic (first match wins):
+      1. The rule's ``jira_project_key`` must match the issue's project.
+      2. If ``include_components`` is set, the issue must have at least one matching component.
+      3. If ``exclude_components`` is set, the issue must NOT have any matching component.
+      4. If ``include_labels`` is set, the issue must have at least one matching label.
+      5. If ``exclude_labels`` is set, the issue must NOT have any matching label.
+      6. If ``include_teams`` is set, the issue must have at least one matching team.
+      7. If ``exclude_teams`` is set, the issue must NOT have any matching team.
+    """
+    for rule in rules:
+        if rule.jira_project_key != jira_project_key:
+            continue
+
+        # Component filters
+        if rule.include_components and not set(rule.include_components) & set(issue_components):
+            continue
+        if rule.exclude_components and set(rule.exclude_components) & set(issue_components):
+            continue
+
+        # Label filters
+        if rule.include_labels and not set(rule.include_labels) & set(issue_labels):
+            continue
+        if rule.exclude_labels and set(rule.exclude_labels) & set(issue_labels):
+            continue
+
+        # Team filters
+        if rule.include_teams and not set(rule.include_teams) & set(issue_teams):
+            continue
+        if rule.exclude_teams and set(rule.exclude_teams) & set(issue_teams):
+            continue
+
+        return rule.product_id
+
+    return fallback_product_id
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 — process raw → roadmap_item
+# ---------------------------------------------------------------------------
 
 def process_raw_jira_data() -> int:
     """Transform unprocessed raw issues into roadmap_items.
@@ -74,7 +163,8 @@ def process_raw_jira_data() -> int:
     """
     with get_db_connection() as conn:
         with conn.cursor() as cur:
-            product_map = _get_product_mapping(cur)
+            rules = _load_source_rules(cur)
+            fallback_id = _get_uncategorized_product_id(cur)
 
             cur.execute("SELECT jira_key, raw_data FROM jira_issue_raw WHERE processed_at IS NULL")
             raw_issues = cur.fetchall()
@@ -83,7 +173,26 @@ def process_raw_jira_data() -> int:
             for jira_key, raw_data in raw_issues:
                 fields = raw_data["fields"]
                 jira_project = jira_key.split("-")[0]
-                product = product_map.get(jira_project, "Uncategorized")
+
+                issue_components = [
+                    c["name"] for c in (fields.get("components") or []) if isinstance(c, dict)
+                ]
+                issue_labels = fields.get("labels") or []
+
+                # Jira "team" can live in customfield_10001 (Team) or similar — extract name
+                team_field = fields.get("customfield_10001")
+                if isinstance(team_field, dict):
+                    issue_teams = [team_field.get("name") or team_field.get("value", "")]
+                elif isinstance(team_field, list):
+                    issue_teams = [
+                        t.get("name") or t.get("value", "") for t in team_field if isinstance(t, dict)
+                    ]
+                else:
+                    issue_teams = []
+
+                product_id = _match_issue_to_product(
+                    jira_project, issue_components, issue_labels, issue_teams, rules, fallback_id,
+                )
 
                 color_status = calculate_epic_color(fields)
 
@@ -93,7 +202,7 @@ def process_raw_jira_data() -> int:
                 cur.execute(
                     """
                     INSERT INTO roadmap_item
-                        (jira_key, title, description, status, release, tags, product, color_status, url)
+                        (jira_key, title, description, status, release, tags, product_id, color_status, url)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (jira_key) DO UPDATE SET
                         title        = EXCLUDED.title,
@@ -101,7 +210,7 @@ def process_raw_jira_data() -> int:
                         status       = EXCLUDED.status,
                         release      = EXCLUDED.release,
                         tags         = EXCLUDED.tags,
-                        product      = EXCLUDED.product,
+                        product_id   = EXCLUDED.product_id,
                         color_status = EXCLUDED.color_status,
                         url          = EXCLUDED.url,
                         updated_at   = now();
@@ -112,8 +221,8 @@ def process_raw_jira_data() -> int:
                         fields.get("description"),
                         (fields.get("status") or {}).get("name", "Unknown"),
                         release,
-                        fields.get("labels"),
-                        product,
+                        issue_labels,
+                        product_id,
                         json.dumps(color_status),
                         f"{settings.jira_url}/browse/{jira_key}",
                     ),

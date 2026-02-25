@@ -10,10 +10,11 @@ from collections import OrderedDict
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
-from fastapi import BackgroundTasks, FastAPI, Query, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
 
 from .database import get_db_connection
 from .jira_sync import process_raw_jira_data, sync_jira_data
@@ -162,20 +163,22 @@ def get_roadmap(
     params: list = []
 
     if product:
-        clauses.append("product = %s")
+        clauses.append("p.name = %s")
         params.append(product)
     if status:
-        clauses.append("status = %s")
+        clauses.append("r.status = %s")
         params.append(status)
     if release:
-        clauses.append("release = %s")
+        clauses.append("r.release = %s")
         params.append(release)
 
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     query = (
-        "SELECT id, jira_key, title, description, status, release, tags, "
-        f"       product, color_status, url, created_at, updated_at FROM roadmap_item{where} "
-        "ORDER BY updated_at DESC"
+        "SELECT r.id, r.jira_key, r.title, r.description, r.status, r.release, r.tags, "
+        "       p.name AS product, r.color_status, r.url, r.created_at, r.updated_at "
+        "FROM roadmap_item r "
+        f"LEFT JOIN product p ON p.id = r.product_id{where} "
+        "ORDER BY r.updated_at DESC"
     )
 
     with get_db_connection() as conn, conn.cursor() as cur:
@@ -184,6 +187,193 @@ def get_roadmap(
         rows = cur.fetchall()
 
     return {"data": [dict(zip(columns, row, strict=False)) for row in rows], "meta": {"total": len(rows)}}
+
+
+# ---------------------------------------------------------------------------
+# Product CRUD — /api/v1/products
+# ---------------------------------------------------------------------------
+
+class JiraSourceIn(BaseModel):
+    """Input schema for a Jira source rule within a product."""
+
+    jira_project_key: str
+    include_components: list[str] | None = None
+    exclude_components: list[str] | None = None
+    include_labels: list[str] | None = None
+    exclude_labels: list[str] | None = None
+    include_teams: list[str] | None = None
+    exclude_teams: list[str] | None = None
+
+
+class ProductIn(BaseModel):
+    """Input schema for creating/updating a product."""
+
+    name: str
+    department: str = "Unassigned"
+    jira_sources: list[JiraSourceIn] = []
+
+
+class JiraSourceOut(BaseModel):
+    """Output schema for a Jira source rule."""
+
+    id: int
+    jira_project_key: str
+    include_components: list[str] | None
+    exclude_components: list[str] | None
+    include_labels: list[str] | None
+    exclude_labels: list[str] | None
+    include_teams: list[str] | None
+    exclude_teams: list[str] | None
+
+
+class ProductOut(BaseModel):
+    """Output schema for a product with its Jira source rules."""
+
+    id: int
+    name: str
+    department: str
+    jira_sources: list[JiraSourceOut]
+
+
+def _fetch_product_with_sources(cur, product_id: int) -> dict | None:
+    """Read a single product + its jira_sources from the DB. Returns None if not found."""
+    cur.execute("SELECT id, name, department FROM product WHERE id = %s", (product_id,))
+    row = cur.fetchone()
+    if not row:
+        return None
+    product = {"id": row[0], "name": row[1], "department": row[2]}
+    cur.execute(
+        "SELECT id, jira_project_key, include_components, exclude_components, "
+        "       include_labels, exclude_labels, include_teams, exclude_teams "
+        "FROM product_jira_source WHERE product_id = %s ORDER BY id",
+        (product_id,),
+    )
+    product["jira_sources"] = [
+        {
+            "id": r[0],
+            "jira_project_key": r[1],
+            "include_components": r[2],
+            "exclude_components": r[3],
+            "include_labels": r[4],
+            "exclude_labels": r[5],
+            "include_teams": r[6],
+            "exclude_teams": r[7],
+        }
+        for r in cur.fetchall()
+    ]
+    return product
+
+
+@app.get("/api/v1/products")
+def list_products():
+    """List all products with their Jira source mappings."""
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT id FROM product ORDER BY department, name")
+        product_ids = [r[0] for r in cur.fetchall()]
+        products = [_fetch_product_with_sources(cur, pid) for pid in product_ids]
+    return {"data": products, "meta": {"total": len(products)}}
+
+
+@app.get("/api/v1/products/{product_id}")
+def get_product(product_id: int):
+    """Get a single product by ID."""
+    with get_db_connection() as conn, conn.cursor() as cur:
+        product = _fetch_product_with_sources(cur, product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    return {"data": product}
+
+
+@app.post("/api/v1/products", status_code=201)
+def create_product(body: ProductIn):
+    """Create a product with optional Jira source mappings."""
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO product (name, department) VALUES (%s, %s) RETURNING id",
+            (body.name, body.department),
+        )
+        product_id = cur.fetchone()[0]
+
+        for src in body.jira_sources:
+            cur.execute(
+                "INSERT INTO product_jira_source "
+                "  (product_id, jira_project_key, include_components, exclude_components, "
+                "   include_labels, exclude_labels, include_teams, exclude_teams) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                (
+                    product_id,
+                    src.jira_project_key,
+                    src.include_components,
+                    src.exclude_components,
+                    src.include_labels,
+                    src.exclude_labels,
+                    src.include_teams,
+                    src.exclude_teams,
+                ),
+            )
+
+        conn.commit()
+        product = _fetch_product_with_sources(cur, product_id)
+
+    return {"data": product}
+
+
+@app.put("/api/v1/products/{product_id}")
+def update_product(product_id: int, body: ProductIn):
+    """Replace a product's details and Jira source mappings entirely."""
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT id FROM product WHERE id = %s", (product_id,))
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail="Product not found")
+
+        cur.execute(
+            "UPDATE product SET name = %s, department = %s, updated_at = now() WHERE id = %s",
+            (body.name, body.department, product_id),
+        )
+
+        # Replace all source rules (simple and safe for small cardinality)
+        cur.execute("DELETE FROM product_jira_source WHERE product_id = %s", (product_id,))
+        for src in body.jira_sources:
+            cur.execute(
+                "INSERT INTO product_jira_source "
+                "  (product_id, jira_project_key, include_components, exclude_components, "
+                "   include_labels, exclude_labels, include_teams, exclude_teams) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                (
+                    product_id,
+                    src.jira_project_key,
+                    src.include_components,
+                    src.exclude_components,
+                    src.include_labels,
+                    src.exclude_labels,
+                    src.include_teams,
+                    src.exclude_teams,
+                ),
+            )
+
+        conn.commit()
+        product = _fetch_product_with_sources(cur, product_id)
+
+    return {"data": product}
+
+
+@app.delete("/api/v1/products/{product_id}", status_code=204)
+def delete_product(product_id: int):
+    """Delete a product and its Jira source mappings.
+
+    Roadmap items referencing this product will have their product_id set to NULL.
+    """
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT id FROM product WHERE id = %s", (product_id,))
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail="Product not found")
+
+        # Unlink roadmap items so they don't get cascade-deleted
+        cur.execute("UPDATE roadmap_item SET product_id = NULL WHERE product_id = %s", (product_id,))
+        cur.execute("DELETE FROM product WHERE id = %s", (product_id,))
+        conn.commit()
+
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -234,16 +424,16 @@ def _query_roadmap_items(
         clauses.append("p.department = %s")
         params.append(department)
     if product:
-        clauses.append("r.product = %s")
+        clauses.append("p.name = %s")
         params.append(product)
 
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     query = (
-        "SELECT r.id, r.jira_key, r.title, r.product, "
+        "SELECT r.id, r.jira_key, r.title, p.name AS product, "
         "       r.color_status, r.url, r.tags "
         "FROM roadmap_item r "
-        f"JOIN product p ON p.name = r.product{where} "
-        "ORDER BY r.product, r.title"
+        f"JOIN product p ON p.id = r.product_id{where} "
+        "ORDER BY p.name, r.title"
     )
 
     with get_db_connection() as conn, conn.cursor() as cur:
