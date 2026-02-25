@@ -48,6 +48,8 @@ CREATE TABLE IF NOT EXISTS roadmap_item (
     url             TEXT,
     parent_key      VARCHAR(64),   -- parent (objective) Jira key, e.g. "ROCK-100"
     parent_summary  VARCHAR(512),  -- parent (objective) summary / title
+    rank            VARCHAR(64),   -- Jira rank string for ordering (lexicographic)
+    parent_rank     VARCHAR(64),   -- parent (objective) rank for objective ordering
     created_at      TIMESTAMPTZ  NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
@@ -61,6 +63,20 @@ BEGIN
     ) THEN
         ALTER TABLE roadmap_item ADD COLUMN parent_key VARCHAR(64);
         ALTER TABLE roadmap_item ADD COLUMN parent_summary VARCHAR(512);
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'roadmap_item' AND column_name = 'rank'
+    ) THEN
+        ALTER TABLE roadmap_item ADD COLUMN rank VARCHAR(64);
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'roadmap_item' AND column_name = 'parent_rank'
+    ) THEN
+        ALTER TABLE roadmap_item ADD COLUMN parent_rank VARCHAR(64);
     END IF;
 END $$;
 

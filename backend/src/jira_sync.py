@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 def sync_jira_data() -> int:
     """Fetch issues matching the configured JQL and store raw JSON.
 
+    Also fetches parent issues (objectives) in a second batch to capture their rank.
     Returns the number of issues upserted.
     """
     logger.info("Connecting to Jira at %s as %s", settings.jira_url, settings.jira_username)
@@ -39,9 +40,47 @@ def sync_jira_data() -> int:
         logger.warning("JQL returned 0 issues — check your query and credentials")
         return 0
 
+    # Collect unique parent keys so we can fetch their rank
+    parent_keys: set[str] = set()
+    for issue in issues:
+        parent = (issue.raw.get("fields") or {}).get("parent")
+        if isinstance(parent, dict) and parent.get("key"):
+            parent_keys.add(parent["key"])
+
+    # Fetch parent issues in a single batch to get their rank
+    parent_ranks: dict[str, str] = {}
+    fetched_parent_keys = parent_keys.copy()
+    # Remove parents that are already in the fetched issues
+    issue_keys = {issue.key for issue in issues}
+    for issue in issues:
+        if issue.key in parent_keys:
+            rank = (issue.raw.get("fields") or {}).get("customfield_10019", "")
+            parent_ranks[issue.key] = rank or ""
+            fetched_parent_keys.discard(issue.key)
+
+    if fetched_parent_keys:
+        # Batch fetch parents (JQL: key in (...))
+        keys_csv = ", ".join(fetched_parent_keys)
+        parent_jql = f"key in ({keys_csv})"
+        logger.info("Fetching %d parent issues for rank: %s", len(fetched_parent_keys), parent_jql)
+        try:
+            parent_issues = jira.search_issues(parent_jql, maxResults=False, fields="customfield_10019,summary")
+            for pi in parent_issues:
+                rank = (pi.raw.get("fields") or {}).get("customfield_10019", "")
+                parent_ranks[pi.key] = rank or ""
+            logger.info("Fetched ranks for %d parent issues", len(parent_issues))
+        except Exception:
+            logger.exception("Failed to fetch parent ranks — objectives will sort by name")
+
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             for issue in issues:
+                # Inject parent_rank into the raw payload for Phase 2
+                raw = issue.raw
+                parent = (raw.get("fields") or {}).get("parent")
+                if isinstance(parent, dict) and parent.get("key"):
+                    raw.setdefault("_roadmap_meta", {})["parent_rank"] = parent_ranks.get(parent["key"], "")
+
                 cur.execute(
                     """
                     INSERT INTO jira_issue_raw (jira_key, raw_data)
@@ -51,7 +90,7 @@ def sync_jira_data() -> int:
                         fetched_at = now(),
                         processed_at = NULL;
                     """,
-                    (issue.key, json.dumps(issue.raw)),
+                    (issue.key, json.dumps(raw)),
                 )
         conn.commit()
 
@@ -208,12 +247,18 @@ def process_raw_jira_data() -> int:
                     parent_fields = parent.get("fields") or {}
                     parent_summary = parent_fields.get("summary")
 
+                # Jira rank (customfield_10019) — lexicographic string for ordering
+                rank = fields.get("customfield_10019") or ""
+
+                # Parent rank — injected by Phase 1 into _roadmap_meta
+                parent_rank = (raw_data.get("_roadmap_meta") or {}).get("parent_rank", "")
+
                 cur.execute(
                     """
                     INSERT INTO roadmap_item
                         (jira_key, title, description, status, release, tags, product_id,
-                         color_status, url, parent_key, parent_summary)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                         color_status, url, parent_key, parent_summary, rank, parent_rank)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (jira_key) DO UPDATE SET
                         title           = EXCLUDED.title,
                         description     = EXCLUDED.description,
@@ -225,6 +270,8 @@ def process_raw_jira_data() -> int:
                         url             = EXCLUDED.url,
                         parent_key      = EXCLUDED.parent_key,
                         parent_summary  = EXCLUDED.parent_summary,
+                        rank            = EXCLUDED.rank,
+                        parent_rank     = EXCLUDED.parent_rank,
                         updated_at      = now();
                     """,
                     (
@@ -239,6 +286,8 @@ def process_raw_jira_data() -> int:
                         f"{settings.jira_url}/browse/{jira_key}",
                         parent_key,
                         parent_summary,
+                        rank,
+                        parent_rank,
                     ),
                 )
 
