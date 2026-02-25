@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}Roadmap{% endblock %}</title>
+
+  <!-- Vanilla Framework from CDN -->
+  <link rel="stylesheet" href="https://assets.ubuntu.com/v1/vanilla-framework-version-4.21.0.min.css" />
+
+  <style>
+    /* ── colour cells ───────────────────────────────────────────────── */
+    .color-cell {
+      width: 2rem;
+      height: 1.5rem;
+      border-radius: .25rem;
+      display: inline-block;
+      vertical-align: middle;
+      border: 1px solid rgba(0, 0, 0, .15);
+      text-align: center;
+      font-size: .75rem;
+      font-weight: 700;
+      line-height: 1.5rem;
+      color: #fff;
+    }
+    .color-cell--green  { background-color: #0e8420; }
+    .color-cell--orange { background-color: #e95420; }
+    .color-cell--red    { background-color: #c7162b; }
+    .color-cell--blue   { background-color: #007aa6; }
+    .color-cell--black  { background-color: #111; }
+    .color-cell--white  { background-color: #fff; border-color: #999; color: #666; }
+    .color-cell--purple { background-color: #7c5295; }
+
+    /* ── carry-over badge ───────────────────────────────────────────── */
+    .carry-over-badge {
+      display: inline-block;
+      min-width: 1.5rem;
+      padding: 0 .35rem;
+      border-radius: .75rem;
+      background-color: #7c5295;
+      color: #fff;
+      font-size: .75rem;
+      font-weight: 600;
+      text-align: center;
+      line-height: 1.5rem;
+    }
+
+    /* ── filter bar ─────────────────────────────────────────────────── */
+    .filter-bar {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+      align-items: flex-end;
+      margin-bottom: 1.5rem;
+    }
+    .filter-bar .p-form__group { margin-bottom: 0; }
+
+    /* ── product section ────────────────────────────────────────────── */
+    .product-section { margin-bottom: 2rem; }
+    .product-section h3 { margin-bottom: .5rem; }
+
+    /* ── cycle columns (auto-generated) ─────────────────────────────── */
+    .cycle-header { min-width: 4rem; text-align: center; }
+  </style>
+
+  {% block head %}{% endblock %}
+</head>
+<body>
+
+  <header id="navigation" class="p-navigation">
+    <div class="p-navigation__row--full-width">
+      <div class="p-navigation__banner">
+        <a class="p-navigation__tagged-logo" href="/">
+          <span class="p-navigation__logo-tag">
+            <img class="p-navigation__logo-icon" src="https://assets.ubuntu.com/v1/82818827-CoF_white.svg" alt="" />
+          </span>
+          <span class="p-navigation__logo-title">Roadmap</span>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <main class="l-main">
+    <div class="row">
+      {% block content %}{% endblock %}
+    </div>
+  </main>
+
+  {% block scripts %}{% endblock %}
+</body>
+</html>

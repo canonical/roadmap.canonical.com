@@ -6,7 +6,10 @@ layer can use it without circular imports, and so it's trivially testable.
 
 from __future__ import annotations
 
+import re
 from typing import Any
+
+CYCLE_RE = re.compile(r"^\d{2}\.\d{2}$")
 
 
 def calculate_epic_color(issue_fields: dict[str, Any]) -> dict[str, Any]:
@@ -19,7 +22,7 @@ def calculate_epic_color(issue_fields: dict[str, Any]) -> dict[str, Any]:
         }
 
     Rules:
-        - Multiple release labels → carry-over (purple badge).
+        - Multiple *cycle* labels (XX.XX pattern) → carry-over (purple badge).
         - Custom field ``roadmap_state`` overrides health color.
         - ``Done`` → green + completed label "C".
         - ``Rejected`` → red.
@@ -34,9 +37,10 @@ def calculate_epic_color(issue_fields: dict[str, Any]) -> dict[str, Any]:
     state: str | None = roadmap_state_field.get("value") if isinstance(roadmap_state_field, dict) else None
 
     # --- carry-over ----------------------------------------------------------
+    cycle_labels = [lbl for lbl in labels if CYCLE_RE.match(lbl)]
     carry_over = None
-    if len(labels) > 1:
-        carry_over = {"color": "purple", "count": len(labels) - 1}
+    if len(cycle_labels) > 1:
+        carry_over = {"color": "purple", "count": len(cycle_labels) - 1}
 
     # --- health color --------------------------------------------------------
     state_color_map = {
