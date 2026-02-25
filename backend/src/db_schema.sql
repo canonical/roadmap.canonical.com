@@ -9,25 +9,30 @@ CREATE TABLE IF NOT EXISTS jira_issue_raw (
     processed_at TIMESTAMPTZ
 );
 
--- Product → Jira project mapping (manually seeded)
+-- Products — each product belongs to a department
 CREATE TABLE IF NOT EXISTS product (
-    name            VARCHAR(128) PRIMARY KEY,
-    department      VARCHAR(128) NOT NULL DEFAULT 'Unassigned',
-    primary_project VARCHAR(32)  NOT NULL,
-    secondary_projects TEXT[],
-    component_filter   TEXT[]
+    id          SERIAL       PRIMARY KEY,
+    name        VARCHAR(128) NOT NULL UNIQUE,
+    department  VARCHAR(128) NOT NULL DEFAULT 'Unassigned',
+    created_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 
--- Migration: add department column if missing (idempotent)
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_name = 'product' AND column_name = 'department'
-    ) THEN
-        ALTER TABLE product ADD COLUMN department VARCHAR(128) NOT NULL DEFAULT 'Unassigned';
-    END IF;
-END $$;
+-- Per-product Jira source rules — one product can pull from many Jira projects,
+-- each with optional component/label/team filters.
+CREATE TABLE IF NOT EXISTS product_jira_source (
+    id                  SERIAL       PRIMARY KEY,
+    product_id          INTEGER      NOT NULL REFERENCES product(id) ON DELETE CASCADE,
+    jira_project_key    VARCHAR(32)  NOT NULL,
+    include_components  TEXT[],       -- only show epics in these components (NULL = all)
+    exclude_components  TEXT[],       -- hide epics in these components (NULL = none)
+    include_labels      TEXT[],       -- only show epics with these labels (NULL = all)
+    exclude_labels      TEXT[],       -- hide epics with these labels (NULL = none)
+    include_teams       TEXT[],       -- only show epics owned by these teams (NULL = all)
+    exclude_teams       TEXT[],       -- hide epics owned by these teams (NULL = none)
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    UNIQUE (product_id, jira_project_key)
+);
 
 -- Processed roadmap items ready for the API
 CREATE TABLE IF NOT EXISTS roadmap_item (
@@ -38,7 +43,7 @@ CREATE TABLE IF NOT EXISTS roadmap_item (
     status       VARCHAR(64)  NOT NULL,
     release      VARCHAR(64),
     tags         TEXT[],
-    product      VARCHAR(128) REFERENCES product(name),
+    product_id   INTEGER      REFERENCES product(id),
     color_status JSONB,
     url          TEXT,
     created_at   TIMESTAMPTZ  NOT NULL DEFAULT now(),
@@ -46,6 +51,6 @@ CREATE TABLE IF NOT EXISTS roadmap_item (
 );
 
 -- Seed a catch-all product so FK never fails
-INSERT INTO product (name, primary_project)
-VALUES ('Uncategorized', 'NONE')
+INSERT INTO product (name, department)
+VALUES ('Uncategorized', 'Unassigned')
 ON CONFLICT (name) DO NOTHING;

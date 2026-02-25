@@ -136,6 +136,61 @@
 - **28/28 tests pass, 0 warnings, 0 lint errors**
 
 ### Next steps
-- Seed products & departments, re-sync real Jira data
+- Seed products & departments via API, re-sync real Jira data
 - Possibly add collapsible cycle sections for long pages
 - Add pagination if item count grows large
+
+---
+
+## 2026-02-25 — Product-Jira mapping API (replaces direct DB seeding)
+
+### What changed
+- **Schema redesign**: `product` table now uses `id SERIAL PRIMARY KEY` instead of `name` as PK.
+  Old columns `primary_project`, `secondary_projects`, `component_filter` removed.
+- **New table `product_jira_source`**: normalized mapping of product → Jira project keys with
+  filter columns: `include_components`, `exclude_components`, `include_labels`, `teams`.
+  One product can have many Jira sources (e.g. `LXD` + `WD["Anbox/LXD Tribe"]`).
+- **`roadmap_item.product`** column renamed to **`roadmap_item.product_id`** (FK to `product.id`).
+- **CRUD API** at `/api/v1/products` — full Create/Read/Update/Delete with nested `jira_sources`.
+  Replaces manual SQL seeding.
+- **Sync pipeline rewritten**: `_match_issue_to_product()` evaluates source rules with
+  include/exclude component and label filters. First matching rule wins; unmatched issues
+  land in `Uncategorized`.
+- **All existing queries updated** to JOIN on `product_id` instead of `product` name.
+
+### New API endpoints
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/products` | List all products with Jira sources |
+| `GET` | `/api/v1/products/{id}` | Get single product |
+| `POST` | `/api/v1/products` | Create product + Jira sources |
+| `PUT` | `/api/v1/products/{id}` | Replace product + sources |
+| `DELETE` | `/api/v1/products/{id}` | Delete product (unlinks items) |
+
+### Files modified
+- `backend/src/db_schema.sql` — new schema: `product` (id PK), `product_jira_source`, `roadmap_item.product_id`
+- `backend/src/api.py` — added Pydantic models, CRUD endpoints, updated all queries
+- `backend/src/jira_sync.py` — `JiraSourceRule` dataclass, `_match_issue_to_product()`, updated Phase 2
+- `backend/tests/test_api.py` — 7 new product CRUD tests, all existing tests adapted to new schema
+- `backend/tests/test_jira_sync.py` — 8 new tests: 2 integration (source rules, fallback), 6 unit tests for matching logic
+- `backend/tests/conftest.py` — updated DROP to include `product_jira_source`
+- `README.md` — updated seeding docs, API reference table, mapping syntax examples
+- `memory.md` — this entry
+
+### Test status
+- **44/44 tests pass, 0 warnings**
+
+### Key decisions
+1. **Normalized `product_jira_source` over arrays** — cleaner to query, easier to CRUD via API,
+   supports per-source filters without parsing syntax strings.
+2. **`id` PK on product** instead of `name` — allows product renames without cascading FK updates.
+3. **PUT replaces all sources** (delete + re-insert) — simpler than PATCH for small cardinality.
+   Individual source management can be added later if needed.
+4. **First-match-wins** rule ordering — matches the old spreadsheet convention where the first
+   matching project/filter takes precedence.
+5. **DELETE unlinks items** (sets `product_id = NULL`) rather than cascade-deleting roadmap items.
+
+### Next steps
+- Seed real products via API
+- After re-sync, re-process to populate product assignments
+- Consider admin UI for product management (currently API-only)

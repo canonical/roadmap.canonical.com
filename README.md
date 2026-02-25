@@ -53,22 +53,81 @@ curl http://localhost:8000/api/v1/status
 
 Then refresh the page to see the synced items.
 
-### 6. Seed products & departments
+### 6. Seed products & Jira mappings
 
-Products are mapped manually. Insert rows into the `product` table:
+Products and their Jira project associations are managed via the API.
 
-```sql
-INSERT INTO product (name, department, primary_project)
-VALUES
-    ('Juju',  'Engineering', 'JUJU'),
-    ('MAAS',  'Engineering', 'MAAS'),
-    ('Snap',  'Tooling',     'SNAP')
-ON CONFLICT (name) DO UPDATE SET
-    department = EXCLUDED.department,
-    primary_project = EXCLUDED.primary_project;
+**Create a product with Jira source mappings:**
+```bash
+curl -X POST http://localhost:8000/api/v1/products \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "name": "LXD",
+    "department": "Containers",
+    "jira_sources": [
+      {"jira_project_key": "LXD"},
+      {"jira_project_key": "WD", "include_components": ["Anbox/LXD Tribe"]}
+    ]
+  }'
 ```
 
-After seeding, re-sync or re-process to associate items with the correct products.
+**List all products:**
+```bash
+curl http://localhost:8000/api/v1/products
+```
+
+**Get a single product by ID:**
+```bash
+curl http://localhost:8000/api/v1/products/1
+```
+
+**Update a product (replaces all fields and Jira sources):**
+```bash
+curl -X PUT http://localhost:8000/api/v1/products/1 \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "name": "LXD",
+    "department": "Containers",
+    "jira_sources": [
+      {"jira_project_key": "LXD", "exclude_components": ["CI"]},
+      {"jira_project_key": "WD", "include_components": ["Anbox/LXD Tribe"]},
+      {"jira_project_key": "SNAP", "include_labels": ["lxd-related"], "exclude_teams": ["QA"]}
+    ]
+  }'
+```
+
+**Delete a product:**
+```bash
+curl -X DELETE http://localhost:8000/api/v1/products/1
+```
+
+**Mapping syntax (per Jira source rule):**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `jira_project_key` | string | Jira project key (e.g. `LXD`, `MAAS`) |
+| `include_components` | string[] | Only include epics that have at least one of these components |
+| `exclude_components` | string[] | Exclude epics that have any of these components |
+| `include_labels` | string[] | Only include epics that have at least one of these labels |
+| `exclude_labels` | string[] | Exclude epics that have any of these labels |
+| `include_teams` | string[] | Only include epics owned by at least one of these teams |
+| `exclude_teams` | string[] | Exclude epics owned by any of these teams |
+
+All filters are optional (NULL = no filtering). When multiple filters are set on a single source rule, they are AND-ed together.
+
+A single product can have multiple Jira sources. During sync, each issue is matched against the rules (first match wins). Issues that don't match any rule land in the `Uncategorized` product.
+
+**Examples matching the old spreadsheet syntax:**
+
+| Old syntax | API equivalent |
+|------------|---------------|
+| `LXD` | `{"jira_project_key": "LXD"}` |
+| `OPENG;TAP;SMS;OBC` | 4 separate sources, one per key |
+| `LXD;WD["Anbox/LXD Tribe"]` | `[{"jira_project_key": "LXD"}, {"jira_project_key": "WD", "include_components": ["Anbox/LXD Tribe"]}]` |
+| `PALS["Scriptlets","Starform"]` | `{"jira_project_key": "PALS", "include_components": ["Scriptlets", "Starform"]}` |
+| `FR["!Toolchains"]` | `{"jira_project_key": "FR", "exclude_components": ["Toolchains"]}` |
+
+After seeding products, re-sync (`POST /api/v1/sync`) to re-process issues with the new mappings.
 
 ## Running tests
 
@@ -91,6 +150,11 @@ pytest -v
 | `POST` | `/api/v1/sync` | Trigger a background Jira sync |
 | `GET` | `/api/v1/status` | Current sync status |
 | `GET` | `/api/v1/roadmap` | JSON list of roadmap items (supports `?product=`, `?status=`, `?release=` filters) |
+| `GET` | `/api/v1/products` | List all products with their Jira source mappings |
+| `GET` | `/api/v1/products/{id}` | Get a single product |
+| `POST` | `/api/v1/products` | Create a product with Jira source mappings |
+| `PUT` | `/api/v1/products/{id}` | Replace a product's details and Jira sources |
+| `DELETE` | `/api/v1/products/{id}` | Delete a product (unlinks roadmap items) |
 
 ## Project structure
 
