@@ -75,8 +75,16 @@
     .product-column {
       flex: 1 1 0;
       min-width: 20rem;
+      max-width: 50rem;
     }
     .product-column h4 { margin-bottom: .25rem; }
+
+    /* ── summary truncation ─────────────────────────────────────────── */
+    .summary-cell {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
   </style>
 
   {% block head %}{% endblock %}
