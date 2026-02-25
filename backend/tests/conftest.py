@@ -18,7 +18,7 @@ def _setup_test_database():
     os.environ.setdefault("JIRA_URL", "http://mock.jira.test")
     os.environ.setdefault("JIRA_USERNAME", "mock")
     os.environ.setdefault("JIRA_PAT", "mock")
-    os.environ.setdefault("JQL_QUERY", "project=MOCK")
+    os.environ.setdefault("JQL_FILTER", "issuetype = Epic")
 
     # Test DB runs on port 5433 via docker-compose db-test service
     db_host = os.environ.get("DB_TEST_HOST", "localhost")

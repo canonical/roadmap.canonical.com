@@ -17,7 +17,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from .database import get_db_connection
-from .jira_sync import process_raw_jira_data, sync_jira_data
+from .jira_sync import _build_jql, process_raw_jira_data, sync_jira_data
 from .settings import settings
 
 logger = logging.getLogger(__name__)
@@ -48,7 +48,7 @@ async def lifespan(application: FastAPI):
     logger.info("=== Roadmap API starting ===")
     logger.info("  JIRA_URL      = %s", settings.jira_url)
     logger.info("  JIRA_USERNAME = %s", settings.jira_username or "(empty)")
-    logger.info("  JQL_QUERY     = %s", settings.jql_query)
+    logger.info("  JQL_FILTER    = %s", settings.jql_filter)
     logger.info("  DATABASE_URL  = %s", settings.database_url)
 
     if not settings.jira_pat:
@@ -91,7 +91,11 @@ def _run_full_sync() -> None:
     _sync_status["last_sync_start"] = datetime.now(UTC).isoformat()
     _sync_status["error"] = None
     logger.info("Sync started — Phase 1: fetching from Jira")
-    logger.info("  JQL: %s", settings.jql_query)
+    try:
+        effective_jql = _build_jql()
+    except RuntimeError:
+        effective_jql = "(no projects configured)"
+    logger.info("  Effective JQL: %s", effective_jql)
     try:
         fetched = sync_jira_data()
         _sync_status["issues_fetched"] = fetched
@@ -141,11 +145,17 @@ def get_status():
     except Exception:
         db_counts["error"] = "could not query database"
 
+    try:
+        effective_jql = _build_jql()
+    except (RuntimeError, Exception):
+        effective_jql = "(no projects configured)"
+
     return {
         **_sync_status,
         "config": {
             "jira_url": settings.jira_url,
-            "jql_query": settings.jql_query,
+            "jql_filter": settings.jql_filter,
+            "effective_jql": effective_jql,
             "database_url": settings.database_url.rsplit("@", 1)[-1],  # hide password
         },
         "db": db_counts,
