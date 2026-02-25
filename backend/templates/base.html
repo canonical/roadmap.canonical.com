@@ -55,6 +55,50 @@
     }
     .filter-bar .p-form__group { margin-bottom: 0; }
 
+    /* ── cycle checkbox dropdown ─────────────────────────────────── */
+    .cycle-dropdown-wrap {
+      flex: 0 1 10rem;
+      min-width: 10rem;
+      overflow: visible;
+    }
+    .cycle-dropdown-toggle {
+      display: block;
+      box-sizing: border-box;
+      cursor: pointer;
+      text-align: left;
+      width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23666'/%3E%3C/svg%3E") right .5rem center / .625rem no-repeat;
+      padding-right: 1.75rem;
+    }
+    .cycle-dropdown-menu {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      z-index: 10;
+      background: #fff;
+      border: 1px solid #d9d9d9;
+      border-radius: .25rem;
+      box-shadow: 0 2px 6px rgba(0,0,0,.15);
+      padding: .5rem 0;
+      min-width: 10rem;
+      max-height: 16rem;
+      overflow-y: auto;
+    }
+    .cycle-dropdown-item {
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+      padding: .25rem .75rem;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .cycle-dropdown-item:hover {
+      background-color: #f7f7f7;
+    }
+
     /* ── product section ────────────────────────────────────────────── */
     .product-section { margin-bottom: 2rem; }
     .product-section h3 { margin-bottom: .5rem; }

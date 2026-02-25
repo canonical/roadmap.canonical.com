@@ -27,20 +27,23 @@
       </select>
     </div>
 
-    <div class="p-form__group">
-      <label for="cycle">Cycle</label>
-      <select name="cycle" id="cycle" class="p-form-validation__input">
-        <option value="">All cycles</option>
+    <div class="p-form__group cycle-dropdown-wrap" style="position:relative;">
+      <label>Cycle</label>
+      <button type="button" id="cycle-toggle" class="p-form-validation__input cycle-dropdown-toggle">
+        {{ selected_cycles | join(', ') if selected_cycles else 'All cycles' }}
+      </button>
+      <div id="cycle-menu" class="cycle-dropdown-menu u-hide">
         {% for c in cycles %}
-          <option value="{{ c }}" {{ 'selected' if c == selected_cycle }}>{{ c }}</option>
+        <label class="cycle-dropdown-item">
+          <input type="checkbox" name="cycle" value="{{ c }}"
+                 {{ 'checked' if c in selected_cycles }}>
+          {{ c }}
+        </label>
         {% endfor %}
-      </select>
+      </div>
     </div>
 
-    <button type="submit" class="p-button--positive">Filter</button>
-    {% if selected_department or selected_product or selected_cycle %}
-      <a href="/" class="p-button">Clear</a>
-    {% endif %}
+    <button type="button" class="p-button" id="clear-btn" onclick="window.location.href='/'">Clear</button>
   </form>
 
   {# ── Legend ──────────────────────────────────────────────────── #}
@@ -132,16 +135,17 @@
   var deptSelect = document.getElementById('department');
   var productSelect = document.getElementById('product');
   var form = document.querySelector('.filter-bar');
+  var clearing = false;
 
   // When department changes, rebuild the product dropdown and auto-submit
   deptSelect.addEventListener('change', function() {
+    if (clearing) return;
     var dept = deptSelect.value;
     var products;
 
     if (dept && deptProducts[dept]) {
       products = deptProducts[dept];
     } else {
-      // No department selected: merge all products (sorted)
       var all = [];
       Object.keys(deptProducts).forEach(function(d) {
         deptProducts[d].forEach(function(p) {
@@ -151,7 +155,6 @@
       products = all.sort();
     }
 
-    // Rebuild options — always select the first product (no "All" option)
     productSelect.innerHTML = '';
     products.forEach(function(p) {
       var opt = document.createElement('option');
@@ -163,8 +166,43 @@
     form.submit();
   });
 
-  // Auto-submit on product or cycle change
-  productSelect.addEventListener('change', function() { form.submit(); });
-  document.getElementById('cycle').addEventListener('change', function() { form.submit(); });
+  // Auto-submit on product change
+  productSelect.addEventListener('change', function() { if (!clearing) form.submit(); });
+
+  // ── Cycle checkbox dropdown ──────────────────────────────────
+  var cycleToggle = document.getElementById('cycle-toggle');
+  var cycleMenu = document.getElementById('cycle-menu');
+  var cycleDirty = false;
+
+  cycleToggle.addEventListener('click', function(e) {
+    e.stopPropagation();
+    cycleMenu.classList.toggle('u-hide');
+  });
+
+  // Close dropdown when clicking outside — submit only if selection changed
+  var clearBtn = document.getElementById('clear-btn');
+  document.addEventListener('click', function(e) {
+    if (clearing) return;
+    if (!cycleMenu.contains(e.target) && e.target !== cycleToggle && e.target !== clearBtn) {
+      if (!cycleMenu.classList.contains('u-hide')) {
+        cycleMenu.classList.add('u-hide');
+        if (cycleDirty) form.submit();
+      }
+    }
+  });
+
+  // On checkbox change → update label text, mark dirty (don't submit yet)
+  cycleMenu.addEventListener('change', function() {
+    var checked = cycleMenu.querySelectorAll('input[type="checkbox"]:checked');
+    var labels = [];
+    checked.forEach(function(cb) { labels.push(cb.value); });
+    cycleToggle.textContent = labels.length ? labels.join(', ') : 'All cycles';
+    cycleDirty = true;
+  });
+
+  // ── Clear button: guard to prevent auto-submit during navigation ──
+  document.getElementById('clear-btn').addEventListener('click', function() {
+    clearing = true;
+  });
 </script>
 {% endblock %}
