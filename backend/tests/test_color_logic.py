@@ -50,6 +50,20 @@ def test_no_carry_over_with_single_label():
     assert result["carry_over"] is None
 
 
+def test_carry_over_ignores_non_cycle_labels():
+    """Non-cycle labels (e.g. 'ComponentPlatform', 'Major') must not inflate carry_over."""
+    fields = {"status": {"name": "In Progress"}, "labels": ["26.04", "ComponentPlatform", "Major", "SSDLC"]}
+    result = calculate_epic_color(fields)
+    assert result["carry_over"] is None
+
+
+def test_carry_over_with_mixed_labels():
+    """Only XX.XX labels count toward carry_over, non-cycle labels are ignored."""
+    fields = {"status": {"name": "In Progress"}, "labels": ["24.04", "25.10", "ComponentPlatform", "Major"]}
+    result = calculate_epic_color(fields)
+    assert result["carry_over"] == {"color": "purple", "count": 1}
+
+
 def test_dropped_state():
     fields = {
         "status": {"name": "Open"},

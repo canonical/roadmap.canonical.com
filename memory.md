@@ -57,3 +57,53 @@
 - Add `.env` with real Jira credentials and test a live sync
 - Add pagination to `/api/v1/roadmap`
 - Start the React frontend scaffold
+
+---
+
+## 2026-02-26 — Bug fix: carry-over logic + frontend (Jinja2 + Vanilla Framework)
+
+### Bug fixed
+- **carry_over counted ALL labels** instead of only cycle labels matching `^\d{2}\.\d{2}$` (e.g. `24.04`, `25.10`).
+  Labels like `ComponentPlatform`, `Major`, `SSDLC` were inflating the count.
+- Fixed in `color_logic.py`: added `CYCLE_RE = re.compile(r"^\d{2}\.\d{2}$")` regex filter.
+- Added 2 new tests: `test_carry_over_ignores_non_cycle_labels`, `test_carry_over_with_mixed_labels`.
+
+### Frontend built
+- **Server-rendered Jinja2 templates** served directly from FastAPI (same pattern as `reference/` project uses Flask + Jinja2).
+- Vanilla Framework CSS loaded from CDN (`assets.ubuntu.com`).
+- Single page at `GET /` with:
+  - Department, Product, and Cycle filter dropdowns (auto-submit on change).
+  - Color legend bar.
+  - One `<table>` per product group.
+  - Columns: carry-over badge, health color cell, summary, Jira key (hyperlink), status, release.
+- 3 new HTML page tests added to `test_api.py`.
+
+### Schema change
+- Added `department` column to `product` table (`VARCHAR(128) NOT NULL DEFAULT 'Unassigned'`).
+- Idempotent `ALTER TABLE` migration added to `db_schema.sql` for existing databases.
+
+### Dependencies
+- Added `jinja2>=3.1,<4` to `pyproject.toml`.
+- Fixed Starlette `TemplateResponse` deprecation: `TemplateResponse(request, name, context)` instead of `TemplateResponse(name, {"request": request, ...})`.
+
+### Files created
+- `backend/templates/base.html` — base layout with Vanilla Framework nav + CSS
+- `backend/templates/roadmap.html` — main roadmap page template
+
+### Files modified
+- `backend/src/color_logic.py` — carry_over regex fix
+- `backend/src/api.py` — added Jinja2Templates, `GET /` endpoint, helper queries
+- `backend/src/db_schema.sql` — department column + migration
+- `backend/pyproject.toml` — jinja2 dependency
+- `backend/tests/test_api.py` — 3 new HTML page tests
+- `backend/tests/test_color_logic.py` — 2 new carry_over tests
+
+### Test status
+- **25/25 tests pass, 0 warnings, 0 lint errors**
+
+### Next steps
+- Seed `product` table with real products and departments
+- Re-sync Jira data to populate the page
+- Add admin guide for product/department seeding
+- Consider adding status/cycle column to tables
+- Add pagination if item count grows large

@@ -12,10 +12,22 @@ CREATE TABLE IF NOT EXISTS jira_issue_raw (
 -- Product → Jira project mapping (manually seeded)
 CREATE TABLE IF NOT EXISTS product (
     name            VARCHAR(128) PRIMARY KEY,
+    department      VARCHAR(128) NOT NULL DEFAULT 'Unassigned',
     primary_project VARCHAR(32)  NOT NULL,
     secondary_projects TEXT[],
     component_filter   TEXT[]
 );
+
+-- Migration: add department column if missing (idempotent)
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'product' AND column_name = 'department'
+    ) THEN
+        ALTER TABLE product ADD COLUMN department VARCHAR(128) NOT NULL DEFAULT 'Unassigned';
+    END IF;
+END $$;
 
 -- Processed roadmap items ready for the API
 CREATE TABLE IF NOT EXISTS roadmap_item (

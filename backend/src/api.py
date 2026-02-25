@@ -2,18 +2,28 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import pathlib
+from collections import OrderedDict
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
-from fastapi import BackgroundTasks, FastAPI, Query
+from fastapi import BackgroundTasks, FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
 
 from .database import get_db_connection
 from .jira_sync import process_raw_jira_data, sync_jira_data
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Templates
+# ---------------------------------------------------------------------------
+TEMPLATE_DIR = pathlib.Path(__file__).resolve().parent.parent / "templates"
+templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
 
 
 # ---------------------------------------------------------------------------
@@ -128,3 +138,96 @@ def get_roadmap(
         rows = cur.fetchall()
 
     return {"data": [dict(zip(columns, row, strict=False)) for row in rows], "meta": {"total": len(rows)}}
+
+
+# ---------------------------------------------------------------------------
+# Server-rendered HTML page
+# ---------------------------------------------------------------------------
+
+def _query_filter_options() -> dict:
+    """Fetch distinct departments, products, and cycle labels for filter dropdowns."""
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT DISTINCT department FROM product ORDER BY department")
+        departments = [r[0] for r in cur.fetchall()]
+
+        cur.execute("SELECT DISTINCT name FROM product ORDER BY name")
+        products = [r[0] for r in cur.fetchall()]
+
+        # Cycles come from the 'release' column on roadmap_item
+        cur.execute("SELECT DISTINCT release FROM roadmap_item WHERE release IS NOT NULL ORDER BY release")
+        cycles = [r[0] for r in cur.fetchall()]
+
+    return {"departments": departments, "products": products, "cycles": cycles}
+
+
+def _query_roadmap_items(
+    department: str | None = None,
+    product: str | None = None,
+    cycle: str | None = None,
+) -> OrderedDict[str, list[dict]]:
+    """Return roadmap items grouped by product name (OrderedDict)."""
+    clauses: list[str] = []
+    params: list = []
+
+    if department:
+        clauses.append("p.department = %s")
+        params.append(department)
+    if product:
+        clauses.append("r.product = %s")
+        params.append(product)
+    if cycle:
+        clauses.append("r.release = %s")
+        params.append(cycle)
+
+    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    query = (
+        "SELECT r.id, r.jira_key, r.title, r.status, r.release, r.product, "
+        "       r.color_status, r.url "
+        "FROM roadmap_item r "
+        f"JOIN product p ON p.name = r.product{where} "
+        "ORDER BY r.product, r.updated_at DESC"
+    )
+
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute(query, params)
+        columns = [desc[0] for desc in cur.description]
+        rows = cur.fetchall()
+
+    grouped: OrderedDict[str, list[dict]] = OrderedDict()
+    for row in rows:
+        item = dict(zip(columns, row, strict=False))
+        # color_status is JSONB — psycopg2 returns it as a dict already,
+        # but if it comes as a string, parse it.
+        cs = item.get("color_status")
+        if isinstance(cs, str):
+            item["color_status"] = json.loads(cs)
+        product_name = item["product"]
+        grouped.setdefault(product_name, []).append(item)
+
+    return grouped
+
+
+@app.get("/", response_class=HTMLResponse)
+def roadmap_page(
+    request: Request,
+    department: str | None = Query(None),
+    product: str | None = Query(None),
+    cycle: str | None = Query(None),
+):
+    """Render the main roadmap page with server-side Jinja2 templates."""
+    options = _query_filter_options()
+    grouped_items = _query_roadmap_items(department=department, product=product, cycle=cycle)
+
+    return templates.TemplateResponse(
+        request,
+        "roadmap.html",
+        {
+            "departments": options["departments"],
+            "products": options["products"],
+            "cycles": options["cycles"],
+            "selected_department": department or "",
+            "selected_product": product or "",
+            "selected_cycle": cycle or "",
+            "grouped_items": grouped_items,
+        },
+    )

@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+
+{% block title %}Roadmap{% endblock %}
+
+{% block content %}
+<div class="col-12">
+  <h1>Roadmap</h1>
+
+  {# ── Filter bar ──────────────────────────────────────────────── #}
+  <form class="filter-bar" method="get" action="/">
+    <div class="p-form__group">
+      <label for="department">Department</label>
+      <select name="department" id="department" class="p-form-validation__input">
+        <option value="">All departments</option>
+        {% for d in departments %}
+          <option value="{{ d }}" {{ 'selected' if d == selected_department }}>{{ d }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="p-form__group">
+      <label for="product">Product</label>
+      <select name="product" id="product" class="p-form-validation__input">
+        <option value="">All products</option>
+        {% for p in products %}
+          <option value="{{ p }}" {{ 'selected' if p == selected_product }}>{{ p }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="p-form__group">
+      <label for="cycle">Cycle</label>
+      <select name="cycle" id="cycle" class="p-form-validation__input">
+        <option value="">All cycles</option>
+        {% for c in cycles %}
+          <option value="{{ c }}" {{ 'selected' if c == selected_cycle }}>{{ c }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <button type="submit" class="p-button--positive">Filter</button>
+    {% if selected_department or selected_product or selected_cycle %}
+      <a href="/" class="p-button">Clear</a>
+    {% endif %}
+  </form>
+
+  {# ── Legend ──────────────────────────────────────────────────── #}
+  <div class="u-sv1" style="display:flex;gap:1rem;flex-wrap:wrap;font-size:.875rem;">
+    <span><span class="color-cell color-cell--green">C</span> Completed</span>
+    <span><span class="color-cell color-cell--green">&nbsp;</span> In Progress</span>
+    <span><span class="color-cell color-cell--orange">&nbsp;</span> At Risk</span>
+    <span><span class="color-cell color-cell--red">&nbsp;</span> Rejected / Excluded</span>
+    <span><span class="color-cell color-cell--blue">&nbsp;</span> Added</span>
+    <span><span class="color-cell color-cell--black">&nbsp;</span> Dropped</span>
+    <span><span class="color-cell color-cell--white">&nbsp;</span> Unknown</span>
+    <span><span class="carry-over-badge">2</span> Carry-over count</span>
+  </div>
+
+  <hr />
+
+  {# ── One table per product ──────────────────────────────────── #}
+  {% if not grouped_items %}
+    <p class="p-heading--4 u-text--muted">No roadmap items match the current filters.</p>
+  {% endif %}
+
+  {% for product_name, items in grouped_items.items() %}
+  <section class="product-section">
+    <h3>{{ product_name }} <span class="p-badge">{{ items | length }}</span></h3>
+
+    <table class="p-table--sortable" role="grid">
+      <thead>
+        <tr>
+          <th style="width:5rem">Carry-over</th>
+          <th style="width:4rem">Health</th>
+          <th>Summary</th>
+          <th style="width:7rem">Jira key</th>
+          <th style="width:7rem">Status</th>
+          <th style="width:6rem">Release</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in items %}
+        <tr>
+          {# carry-over #}
+          <td>
+            {% if item.color_status and item.color_status.carry_over %}
+              <span class="carry-over-badge">{{ item.color_status.carry_over.count }}</span>
+            {% endif %}
+          </td>
+
+          {# health color cell #}
+          <td>
+            {% if item.color_status and item.color_status.health %}
+              <span class="color-cell color-cell--{{ item.color_status.health.color }}">
+                {{- item.color_status.health.get('label', '') -}}
+              </span>
+            {% endif %}
+          </td>
+
+          {# summary #}
+          <td>{{ item.title }}</td>
+
+          {# jira key as link #}
+          <td>
+            <a href="{{ item.url }}" target="_blank" rel="noopener">{{ item.jira_key }}</a>
+          </td>
+
+          {# status #}
+          <td>{{ item.status }}</td>
+
+          {# release #}
+          <td>{{ item.release or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  {% endfor %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Auto-submit on filter change for a snappier UX
+  document.querySelectorAll('.filter-bar select').forEach(function(sel) {
+    sel.addEventListener('change', function() {
+      sel.closest('form').submit();
+    });
+  });
+</script>
+{% endblock %}
