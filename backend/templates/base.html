@@ -126,6 +126,27 @@
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+    .summary-cell a.summary-link,
+    .summary-cell a.summary-link:visited,
+    .summary-cell a.summary-link:active {
+      display: inline-flex;
+      align-items: center;
+      gap: .35rem;
+      color: #000;
+      text-decoration: none;
+      max-width: 100%;
+      opacity: 1;
+    }
+    .summary-cell a.summary-link:hover {
+      text-decoration: underline;
+    }
+    .summary-link .p-icon--external-link {
+      flex-shrink: 0;
+      opacity: .4;
+    }
+    .summary-link:hover .p-icon--external-link {
+      opacity: 1;
+    }
     .jira-link {
       margin-left: .35rem;
       vertical-align: middle;
