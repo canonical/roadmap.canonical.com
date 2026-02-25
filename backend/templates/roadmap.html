@@ -58,62 +58,55 @@
 
   <hr />
 
-  {# ── One table per product ──────────────────────────────────── #}
+  {# ── Cycle rows with product columns ─────────────────────────── #}
   {% if not grouped_items %}
     <p class="p-heading--4 u-text--muted">No roadmap items match the current filters.</p>
   {% endif %}
 
-  {% for product_name, items in grouped_items.items() %}
-  <section class="product-section">
-    <h3>{{ product_name }} <span class="p-badge">{{ items | length }}</span></h3>
+  {% for cycle_name, products_map in grouped_items.items() %}
+  <section class="cycle-section">
+    <h2>Cycle {{ cycle_name }}</h2>
 
-    <table class="p-table--sortable" role="grid">
-      <thead>
-        <tr>
-          <th style="width:5rem">Carry-over</th>
-          <th style="width:4rem">Health</th>
-          <th>Summary</th>
-          <th style="width:7rem">Jira key</th>
-          <th style="width:7rem">Status</th>
-          <th style="width:6rem">Release</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for item in items %}
-        <tr>
-          {# carry-over #}
-          <td>
-            {% if item.color_status and item.color_status.carry_over %}
-              <span class="carry-over-badge">{{ item.color_status.carry_over.count }}</span>
-            {% endif %}
-          </td>
+    <div class="product-grid">
+      {% for product_name, items in products_map.items() %}
+      <div class="product-column">
+        <h4>{{ product_name }} <span class="p-badge">{{ items | length }}</span></h4>
 
-          {# health color cell #}
-          <td>
-            {% if item.color_status and item.color_status.health %}
-              <span class="color-cell color-cell--{{ item.color_status.health.color }}">
-                {{- item.color_status.health.get('label', '') -}}
-              </span>
-            {% endif %}
-          </td>
-
-          {# summary #}
-          <td>{{ item.title }}</td>
-
-          {# jira key as link #}
-          <td>
-            <a href="{{ item.url }}" target="_blank" rel="noopener">{{ item.jira_key }}</a>
-          </td>
-
-          {# status #}
-          <td>{{ item.status }}</td>
-
-          {# release #}
-          <td>{{ item.release or '—' }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+        <table class="p-table--sortable" role="grid">
+          <thead>
+            <tr>
+              <th style="width:5rem">Carry-over</th>
+              <th style="width:3.5rem">Health</th>
+              <th>Summary</th>
+              <th style="width:7rem">Jira key</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in items %}
+            <tr>
+              <td>
+                {% if item.color_status and item.color_status.carry_over %}
+                  <span class="carry-over-badge">{{ item.color_status.carry_over.count }}</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if item.color_status and item.color_status.health %}
+                  <span class="color-cell color-cell--{{ item.color_status.health.color }}">
+                    {{- item.color_status.health.get('label', '') -}}
+                  </span>
+                {% endif %}
+              </td>
+              <td>{{ item.title }}</td>
+              <td>
+                <a href="{{ item.url }}" target="_blank" rel="noopener">{{ item.jira_key }}</a>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endfor %}
+    </div>
   </section>
   {% endfor %}
 </div>

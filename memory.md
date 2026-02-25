@@ -106,4 +106,36 @@
 - Re-sync Jira data to populate the page
 - Add admin guide for product/department seeding
 - Consider adding status/cycle column to tables
+
+---
+
+## 2026-02-25 — Iteration: cycle-based vertical grouping, products horizontal
+
+### What changed
+- **Layout restructured**: Cycle rows (vertical, newest-first) × Product columns (horizontal, side-by-side).
+  Each cycle is an `<h2>` section; products sit in a flex grid below it.
+- **Cycle source**: Cycles now come from `tags` (Jira labels matching `XX.XX`), not from `release`/`fixVersions`.
+  An item with labels `['25.10', '26.04']` appears in both cycle buckets.
+- **Removed columns**: Status and Release columns dropped from tables.
+  Remaining columns: Carry-over, Health, Summary, Jira key.
+- **Hidden items**: Items with no `XX.XX` cycle label are excluded from the page entirely.
+- **Cycle filter**: When a cycle is selected, only that cycle's section appears.
+
+### Files modified
+- `backend/src/api.py` — rewrote `_query_filter_options` (cycles from `unnest(tags)`),
+  `_query_roadmap_items` (returns `OrderedDict[cycle, OrderedDict[product, list[item]]]`),
+  added `import re` and `CYCLE_RE`
+- `backend/templates/roadmap.html` — full rewrite: nested loop cycle→product, removed Status/Release columns
+- `backend/templates/base.html` — added `.cycle-section`, `.product-grid`, `.product-column` CSS
+- `backend/tests/test_api.py` — replaced 3 old HTML tests with 6 new ones:
+  `test_roadmap_page_empty`, `test_roadmap_page_with_data`, `test_roadmap_page_hides_items_without_cycle`,
+  `test_roadmap_page_item_in_multiple_cycles`, `test_roadmap_page_filter_by_cycle`,
+  `test_roadmap_page_filter_by_product`
+
+### Test status
+- **28/28 tests pass, 0 warnings, 0 lint errors**
+
+### Next steps
+- Seed products & departments, re-sync real Jira data
+- Possibly add collapsible cycle sections for long pages
 - Add pagination if item count grows large

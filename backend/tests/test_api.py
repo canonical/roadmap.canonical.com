@@ -87,16 +87,16 @@ def test_roadmap_page_empty(client):
 
 
 def test_roadmap_page_with_data(client):
-    """Items appear in the rendered HTML grouped by product."""
+    """Items with cycle labels appear in the rendered HTML grouped by cycle then product."""
     color = json.dumps({"health": {"color": "green"}, "carry_over": None})
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO roadmap_item
-                    (jira_key, title, status, release, product, color_status, url)
+                    (jira_key, title, status, tags, product, color_status, url)
                 VALUES
-                    ('HTML-1', 'Render test', 'In Progress', '25.10',
+                    ('HTML-1', 'Render test', 'In Progress', ARRAY['25.10'],
                      'Uncategorized', %s, 'http://jira/HTML-1')
                 """,
                 (color,),
@@ -107,7 +107,78 @@ def test_roadmap_page_with_data(client):
     assert resp.status_code == 200
     assert "HTML-1" in resp.text
     assert "Render test" in resp.text
+    assert "Cycle 25.10" in resp.text
     assert "Uncategorized" in resp.text
+
+
+def test_roadmap_page_hides_items_without_cycle(client):
+    """Items that have no XX.XX cycle label are not shown."""
+    color = json.dumps({"health": {"color": "white"}, "carry_over": None})
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO roadmap_item
+                    (jira_key, title, status, tags, product, color_status, url)
+                VALUES
+                    ('NO-1', 'No cycle', 'Open', ARRAY['SomeTag'], 'Uncategorized', %s, '')
+                """,
+                (color,),
+            )
+        conn.commit()
+
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert "NO-1" not in resp.text
+
+
+def test_roadmap_page_item_in_multiple_cycles(client):
+    """An item with two cycle labels appears under both cycle headings."""
+    color = json.dumps({"health": {"color": "green"}, "carry_over": {"color": "purple", "count": 1}})
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO roadmap_item
+                    (jira_key, title, status, tags, product, color_status, url)
+                VALUES
+                    ('MULTI-1', 'Multi-cycle', 'In Progress', ARRAY['25.10', '26.04'],
+                     'Uncategorized', %s, 'http://jira/MULTI-1')
+                """,
+                (color,),
+            )
+        conn.commit()
+
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert "Cycle 26.04" in resp.text
+    assert "Cycle 25.10" in resp.text
+    # The item should appear twice (once per cycle)
+    assert resp.text.count("MULTI-1") >= 2
+
+
+def test_roadmap_page_filter_by_cycle(client):
+    """Cycle filter shows only the selected cycle's items."""
+    color = json.dumps({"health": {"color": "green"}, "carry_over": None})
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            for key, tags in [("CY-1", ["25.10"]), ("CY-2", ["26.04"])]:
+                cur.execute(
+                    """
+                    INSERT INTO roadmap_item
+                        (jira_key, title, status, tags, product, color_status, url)
+                    VALUES (%s, %s, 'Open', %s, 'Uncategorized', %s, '')
+                    """,
+                    (key, f"Epic {key}", tags, color),
+                )
+        conn.commit()
+
+    resp = client.get("/", params={"cycle": "26.04"})
+    assert resp.status_code == 200
+    assert "CY-2" in resp.text
+    assert "CY-1" not in resp.text
+    assert "Cycle 26.04" in resp.text
+    assert "Cycle 25.10" not in resp.text
 
 
 def test_roadmap_page_filter_by_product(client):
@@ -122,8 +193,8 @@ def test_roadmap_page_filter_by_product(client):
                 cur.execute(
                     """
                     INSERT INTO roadmap_item
-                        (jira_key, title, status, product, color_status, url)
-                    VALUES (%s, %s, 'Open', %s, %s, '')
+                        (jira_key, title, status, tags, product, color_status, url)
+                    VALUES (%s, %s, 'Open', ARRAY['26.04'], %s, %s, '')
                     """,
                     (key, f"Epic {key}", prod, color),
                 )

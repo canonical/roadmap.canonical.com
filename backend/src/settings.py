@@ -1,6 +1,12 @@
 """Application settings loaded from environment variables."""
 
+import pathlib
+
 from pydantic_settings import BaseSettings
+
+# Resolve the .env file relative to *this* package, not the CWD.
+# This means `uvicorn --app-dir …` or running from any directory works.
+_ENV_FILE = pathlib.Path(__file__).resolve().parent.parent / ".env"
 
 
 class Settings(BaseSettings):
@@ -13,7 +19,7 @@ class Settings(BaseSettings):
     jira_pat: str = ""
     jql_query: str = 'project = "PLACEHOLDER" AND issuetype = Epic'
 
-    model_config = {"env_file": ".env", "extra": "ignore"}
+    model_config = {"env_file": str(_ENV_FILE), "extra": "ignore"}
 
 
 settings = Settings()

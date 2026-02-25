@@ -61,6 +61,22 @@
 
     /* ── cycle columns (auto-generated) ─────────────────────────────── */
     .cycle-header { min-width: 4rem; text-align: center; }
+
+    /* ── cycle → product grid layout ────────────────────────────────── */
+    .cycle-section { margin-bottom: 2.5rem; }
+    .cycle-section h2 { margin-bottom: .75rem; }
+
+    .product-grid {
+      display: flex;
+      gap: 1.5rem;
+      flex-wrap: wrap;
+      align-items: flex-start;
+    }
+    .product-column {
+      flex: 1 1 0;
+      min-width: 20rem;
+    }
+    .product-column h4 { margin-bottom: .25rem; }
   </style>
 
   {% block head %}{% endblock %}

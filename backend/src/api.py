@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import pathlib
+import re
 from collections import OrderedDict
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -16,6 +17,7 @@ from fastapi.templating import Jinja2Templates
 
 from .database import get_db_connection
 from .jira_sync import process_raw_jira_data, sync_jira_data
+from .settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +36,23 @@ SCHEMA_PATH = pathlib.Path(__file__).with_name("db_schema.sql")
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
-    """Apply DB schema on startup."""
+    """Configure logging, apply DB schema, and log effective settings on startup."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+    # Log effective settings so mis-configuration is immediately visible
+    logger.info("=== Roadmap API starting ===")
+    logger.info("  JIRA_URL      = %s", settings.jira_url)
+    logger.info("  JIRA_USERNAME = %s", settings.jira_username or "(empty)")
+    logger.info("  JQL_QUERY     = %s", settings.jql_query)
+    logger.info("  DATABASE_URL  = %s", settings.database_url)
+
+    if not settings.jira_pat:
+        logger.warning("  JIRA_PAT is empty — sync will fail!")
+
     sql = SCHEMA_PATH.read_text()
     with get_db_connection() as conn:
         with conn.cursor() as cur:
@@ -71,15 +89,21 @@ def _run_full_sync() -> None:
     _sync_status["state"] = "syncing"
     _sync_status["last_sync_start"] = datetime.now(UTC).isoformat()
     _sync_status["error"] = None
+    logger.info("Sync started — Phase 1: fetching from Jira")
+    logger.info("  JQL: %s", settings.jql_query)
     try:
         fetched = sync_jira_data()
         _sync_status["issues_fetched"] = fetched
+        logger.info("Phase 1 complete — fetched %d issues", fetched)
+
         _sync_status["state"] = "processing"
+        logger.info("Phase 2: processing raw → roadmap_item")
         processed = process_raw_jira_data()
         _sync_status["issues_processed"] = processed
         _sync_status["state"] = "done"
+        logger.info("Sync complete — fetched=%d, processed=%d", fetched, processed)
     except Exception as exc:
-        logger.exception("Sync failed")
+        logger.exception("Sync failed: %s", exc)
         _sync_status["state"] = "failed"
         _sync_status["error"] = str(exc)
     finally:
@@ -101,8 +125,30 @@ def trigger_sync(background_tasks: BackgroundTasks):
 
 @app.get("/api/v1/status")
 def get_status():
-    """Return current sync status."""
-    return _sync_status
+    """Return current sync status enriched with DB row counts and active config."""
+    db_counts = {}
+    try:
+        with get_db_connection() as conn, conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM jira_issue_raw")
+            db_counts["raw_issues"] = cur.fetchone()[0]
+            cur.execute("SELECT count(*) FROM jira_issue_raw WHERE processed_at IS NOT NULL")
+            db_counts["raw_processed"] = cur.fetchone()[0]
+            cur.execute("SELECT count(*) FROM roadmap_item")
+            db_counts["roadmap_items"] = cur.fetchone()[0]
+            cur.execute("SELECT count(*) FROM product")
+            db_counts["products"] = cur.fetchone()[0]
+    except Exception:
+        db_counts["error"] = "could not query database"
+
+    return {
+        **_sync_status,
+        "config": {
+            "jira_url": settings.jira_url,
+            "jql_query": settings.jql_query,
+            "database_url": settings.database_url.rsplit("@", 1)[-1],  # hide password
+        },
+        "db": db_counts,
+    }
 
 
 @app.get("/api/v1/roadmap")
@@ -144,6 +190,9 @@ def get_roadmap(
 # Server-rendered HTML page
 # ---------------------------------------------------------------------------
 
+CYCLE_RE = re.compile(r"^\d{2}\.\d{2}$")
+
+
 def _query_filter_options() -> dict:
     """Fetch distinct departments, products, and cycle labels for filter dropdowns."""
     with get_db_connection() as conn, conn.cursor() as cur:
@@ -153,9 +202,14 @@ def _query_filter_options() -> dict:
         cur.execute("SELECT DISTINCT name FROM product ORDER BY name")
         products = [r[0] for r in cur.fetchall()]
 
-        # Cycles come from the 'release' column on roadmap_item
-        cur.execute("SELECT DISTINCT release FROM roadmap_item WHERE release IS NOT NULL ORDER BY release")
-        cycles = [r[0] for r in cur.fetchall()]
+        # Cycles come from the tags array (labels) on roadmap_item.
+        # unnest expands the array; we then filter for XX.XX pattern in Python.
+        cur.execute("SELECT DISTINCT unnest(tags) AS tag FROM roadmap_item")
+        all_tags = [r[0] for r in cur.fetchall()]
+        cycles = sorted(
+            [t for t in all_tags if CYCLE_RE.match(t)],
+            reverse=True,
+        )
 
     return {"departments": departments, "products": products, "cycles": cycles}
 
@@ -164,8 +218,15 @@ def _query_roadmap_items(
     department: str | None = None,
     product: str | None = None,
     cycle: str | None = None,
-) -> OrderedDict[str, list[dict]]:
-    """Return roadmap items grouped by product name (OrderedDict)."""
+) -> OrderedDict[str, OrderedDict[str, list[dict]]]:
+    """Return roadmap items grouped by cycle → product.
+
+    Structure: ``{cycle: {product: [items]}}``
+    - Cycles sorted newest-first.
+    - Products sorted alphabetically within each cycle.
+    - Items with no cycle labels are excluded.
+    - An item with multiple cycle labels appears in each bucket.
+    """
     clauses: list[str] = []
     params: list = []
 
@@ -175,17 +236,14 @@ def _query_roadmap_items(
     if product:
         clauses.append("r.product = %s")
         params.append(product)
-    if cycle:
-        clauses.append("r.release = %s")
-        params.append(cycle)
 
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     query = (
-        "SELECT r.id, r.jira_key, r.title, r.status, r.release, r.product, "
-        "       r.color_status, r.url "
+        "SELECT r.id, r.jira_key, r.title, r.product, "
+        "       r.color_status, r.url, r.tags "
         "FROM roadmap_item r "
         f"JOIN product p ON p.name = r.product{where} "
-        "ORDER BY r.product, r.updated_at DESC"
+        "ORDER BY r.product, r.title"
     )
 
     with get_db_connection() as conn, conn.cursor() as cur:
@@ -193,16 +251,36 @@ def _query_roadmap_items(
         columns = [desc[0] for desc in cur.description]
         rows = cur.fetchall()
 
-    grouped: OrderedDict[str, list[dict]] = OrderedDict()
+    # Build cycle → product → items mapping
+    raw: dict[str, dict[str, list[dict]]] = {}
+
     for row in rows:
         item = dict(zip(columns, row, strict=False))
-        # color_status is JSONB — psycopg2 returns it as a dict already,
-        # but if it comes as a string, parse it.
         cs = item.get("color_status")
         if isinstance(cs, str):
             item["color_status"] = json.loads(cs)
+
+        tags = item.get("tags") or []
+        item_cycles = [t for t in tags if CYCLE_RE.match(t)]
+
+        # Skip items with no cycle labels
+        if not item_cycles:
+            continue
+
+        # Apply cycle filter
+        if cycle:
+            if cycle not in item_cycles:
+                continue
+            item_cycles = [cycle]
+
         product_name = item["product"]
-        grouped.setdefault(product_name, []).append(item)
+        for c in item_cycles:
+            raw.setdefault(c, {}).setdefault(product_name, []).append(item)
+
+    # Sort: cycles newest-first, products alphabetically within each cycle
+    grouped: OrderedDict[str, OrderedDict[str, list[dict]]] = OrderedDict()
+    for c in sorted(raw.keys(), reverse=True):
+        grouped[c] = OrderedDict(sorted(raw[c].items()))
 
     return grouped
 
