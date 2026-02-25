@@ -28,9 +28,15 @@ def sync_jira_data() -> int:
 
     Returns the number of issues upserted.
     """
+    logger.info("Connecting to Jira at %s as %s", settings.jira_url, settings.jira_username)
     jira = JIRA(server=settings.jira_url, basic_auth=(settings.jira_username, settings.jira_pat))
+    logger.info("Running JQL: %s", settings.jql_query)
     issues = jira.search_issues(settings.jql_query, maxResults=False)
     logger.info("Fetched %d issues from Jira", len(issues))
+
+    if not issues:
+        logger.warning("JQL returned 0 issues — check your query and credentials")
+        return 0
 
     with get_db_connection() as conn:
         with conn.cursor() as cur:
@@ -72,6 +78,7 @@ def process_raw_jira_data() -> int:
 
             cur.execute("SELECT jira_key, raw_data FROM jira_issue_raw WHERE processed_at IS NULL")
             raw_issues = cur.fetchall()
+            logger.info("Found %d unprocessed raw issues", len(raw_issues))
 
             for jira_key, raw_data in raw_issues:
                 fields = raw_data["fields"]
