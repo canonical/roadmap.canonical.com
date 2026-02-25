@@ -1,0 +1,60 @@
+"""Color/health logic for roadmap epics.
+
+Separated into its own module so both the sync pipeline and the service
+layer can use it without circular imports, and so it's trivially testable.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+
+def calculate_epic_color(issue_fields: dict[str, Any]) -> dict[str, Any]:
+    """Derive color_status from raw Jira issue fields.
+
+    Returns a dict like:
+        {
+            "health": {"color": "green", "label": "C"},  # label is optional
+            "carry_over": {"color": "purple", "count": 1} | None,
+        }
+
+    Rules:
+        - Multiple release labels → carry-over (purple badge).
+        - Custom field ``roadmap_state`` overrides health color.
+        - ``Done`` → green + completed label "C".
+        - ``Rejected`` → red.
+        - Active statuses (In Progress, In Review, …) → green.
+        - Anything else → white (unknown / not started).
+    """
+    labels: list[str] = issue_fields.get("labels") or []
+    status_name: str = (issue_fields.get("status") or {}).get("name", "")
+
+    # roadmap_state is a custom field — adjust the ID to match your Jira instance
+    roadmap_state_field = issue_fields.get("customfield_10968")
+    state: str | None = roadmap_state_field.get("value") if isinstance(roadmap_state_field, dict) else None
+
+    # --- carry-over ----------------------------------------------------------
+    carry_over = None
+    if len(labels) > 1:
+        carry_over = {"color": "purple", "count": len(labels) - 1}
+
+    # --- health color --------------------------------------------------------
+    state_color_map = {
+        "At Risk": "orange",
+        "Excluded": "red",
+        "Added": "blue",
+        "Dropped": "black",
+    }
+
+    if state and state in state_color_map:
+        health = {"color": state_color_map[state]}
+    elif status_name == "Done":
+        health = {"color": "green", "label": "C"}
+    elif status_name == "Rejected":
+        health = {"color": "red"}
+    elif status_name in ("In Progress", "In Review", "To Be Deployed", "BLOCKED"):
+        health = {"color": "green"}
+    else:
+        health = {"color": "white"}
+
+    return {"health": health, "carry_over": carry_over}

@@ -1,2 +1,19 @@
 # ignore all files in reference directory
 reference/*
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+dist/
+build/
+backend/venv/*
+
+# Environment
+.env
+*.env.local
+
+# IDE
+.vscode/
+.idea/
