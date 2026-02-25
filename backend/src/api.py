@@ -17,7 +17,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from .database import get_db_connection
-from .jira_sync import _build_jql, process_raw_jira_data, sync_jira_data
+from .jira_sync import _build_jql, process_raw_jira_data, sync_jira_data, take_daily_snapshot
 from .settings import settings
 
 logger = logging.getLogger(__name__)
@@ -82,6 +82,7 @@ _sync_status: dict = {
     "error": None,
     "issues_fetched": None,
     "issues_processed": None,
+    "snapshot_items": None,
 }
 
 
@@ -105,8 +106,13 @@ def _run_full_sync() -> None:
         logger.info("Phase 2: processing raw → roadmap_item")
         processed = process_raw_jira_data()
         _sync_status["issues_processed"] = processed
+
+        logger.info("Phase 3: daily snapshot")
+        snapshot_count = take_daily_snapshot()
+        _sync_status["snapshot_items"] = snapshot_count
+
         _sync_status["state"] = "done"
-        logger.info("Sync complete — fetched=%d, processed=%d", fetched, processed)
+        logger.info("Sync complete — fetched=%d, processed=%d, snapshot=%d", fetched, processed, snapshot_count)
     except Exception as exc:
         logger.exception("Sync failed: %s", exc)
         _sync_status["state"] = "failed"
@@ -142,6 +148,10 @@ def get_status():
             db_counts["roadmap_items"] = cur.fetchone()[0]
             cur.execute("SELECT count(*) FROM product")
             db_counts["products"] = cur.fetchone()[0]
+            cur.execute("SELECT count(DISTINCT snapshot_date) FROM roadmap_snapshot")
+            db_counts["snapshot_dates"] = cur.fetchone()[0]
+            cur.execute("SELECT count(*) FROM roadmap_snapshot")
+            db_counts["snapshot_rows"] = cur.fetchone()[0]
     except Exception:
         db_counts["error"] = "could not query database"
 
@@ -159,6 +169,119 @@ def get_status():
             "database_url": settings.database_url.rsplit("@", 1)[-1],  # hide password
         },
         "db": db_counts,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Snapshot diff endpoints — biweekly change reports
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/v1/snapshots")
+def list_snapshots():
+    """List all available snapshot dates (newest first)."""
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT snapshot_date, count(*) AS item_count "
+            "FROM roadmap_snapshot GROUP BY snapshot_date ORDER BY snapshot_date DESC"
+        )
+        rows = cur.fetchall()
+    return {
+        "data": [{"date": str(r[0]), "item_count": r[1]} for r in rows],
+        "meta": {"total": len(rows)},
+    }
+
+
+@app.get("/api/v1/snapshots/diff")
+def snapshot_diff(
+    from_date: str = Query(..., description="Start date (YYYY-MM-DD)"),
+    to_date: str = Query(..., description="End date (YYYY-MM-DD)"),
+):
+    """Compare two snapshots and return items that changed, appeared, or disappeared.
+
+    Returns four lists:
+    - ``turned_red``   — items whose color changed *to* red
+    - ``color_changes`` — all items whose color changed (includes turned_red)
+    - ``disappeared``  — items present on *from_date* but missing on *to_date*
+    - ``appeared``     — items present on *to_date* but missing on *from_date*
+    """
+    with get_db_connection() as conn, conn.cursor() as cur:
+        # Verify both dates exist
+        cur.execute(
+            "SELECT DISTINCT snapshot_date FROM roadmap_snapshot "
+            "WHERE snapshot_date IN (%s, %s)",
+            (from_date, to_date),
+        )
+        found_dates = {str(r[0]) for r in cur.fetchall()}
+        missing = {from_date, to_date} - found_dates
+        if missing:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No snapshot found for date(s): {', '.join(sorted(missing))}",
+            )
+
+        # --- Color changes (including turned_red) ---
+        cur.execute(
+            """
+            SELECT f.jira_key, f.title, f.color AS old_color, t.color AS new_color,
+                   t.product_name, t.department, t.status
+            FROM roadmap_snapshot f
+            JOIN roadmap_snapshot t ON f.jira_key = t.jira_key
+            WHERE f.snapshot_date = %s AND t.snapshot_date = %s
+              AND f.color IS DISTINCT FROM t.color
+            ORDER BY t.product_name, f.jira_key
+            """,
+            (from_date, to_date),
+        )
+        color_cols = [d[0] for d in cur.description]
+        color_changes = [dict(zip(color_cols, r, strict=False)) for r in cur.fetchall()]
+        turned_red = [c for c in color_changes if c["new_color"] == "red"]
+
+        # --- Disappeared items ---
+        cur.execute(
+            """
+            SELECT f.jira_key, f.title, f.color, f.status,
+                   f.product_name, f.department
+            FROM roadmap_snapshot f
+            LEFT JOIN roadmap_snapshot t
+              ON f.jira_key = t.jira_key AND t.snapshot_date = %s
+            WHERE f.snapshot_date = %s AND t.jira_key IS NULL
+            ORDER BY f.product_name, f.jira_key
+            """,
+            (to_date, from_date),
+        )
+        dis_cols = [d[0] for d in cur.description]
+        disappeared = [dict(zip(dis_cols, r, strict=False)) for r in cur.fetchall()]
+
+        # --- Appeared items ---
+        cur.execute(
+            """
+            SELECT t.jira_key, t.title, t.color, t.status,
+                   t.product_name, t.department
+            FROM roadmap_snapshot t
+            LEFT JOIN roadmap_snapshot f
+              ON t.jira_key = f.jira_key AND f.snapshot_date = %s
+            WHERE t.snapshot_date = %s AND f.jira_key IS NULL
+            ORDER BY t.product_name, t.jira_key
+            """,
+            (from_date, to_date),
+        )
+        app_cols = [d[0] for d in cur.description]
+        appeared = [dict(zip(app_cols, r, strict=False)) for r in cur.fetchall()]
+
+    return {
+        "from_date": from_date,
+        "to_date": to_date,
+        "turned_red": turned_red,
+        "color_changes": color_changes,
+        "disappeared": disappeared,
+        "appeared": appeared,
+        "summary": {
+            "turned_red": len(turned_red),
+            "color_changes": len(color_changes),
+            "disappeared": len(disappeared),
+            "appeared": len(appeared),
+        },
     }
 
 

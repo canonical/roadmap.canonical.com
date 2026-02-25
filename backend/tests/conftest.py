@@ -37,7 +37,8 @@ def _setup_test_database():
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "DROP TABLE IF EXISTS roadmap_item, product_jira_source, jira_issue_raw, product CASCADE"
+                "DROP TABLE IF EXISTS roadmap_snapshot, roadmap_item,"
+                " product_jira_source, jira_issue_raw, product CASCADE"
             )
             cur.execute(schema_sql)
         conn.commit()
@@ -47,7 +48,8 @@ def _setup_test_database():
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "DROP TABLE IF EXISTS roadmap_item, product_jira_source, jira_issue_raw, product CASCADE"
+                "DROP TABLE IF EXISTS roadmap_snapshot, roadmap_item,"
+                " product_jira_source, jira_issue_raw, product CASCADE"
             )
         conn.commit()
 

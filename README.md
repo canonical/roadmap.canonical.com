@@ -155,6 +155,43 @@ pytest -v
 | `POST` | `/api/v1/products` | Create a product with Jira source mappings |
 | `PUT` | `/api/v1/products/{id}` | Replace a product's details and Jira sources |
 | `DELETE` | `/api/v1/products/{id}` | Delete a product (unlinks roadmap items) |
+| `GET` | `/api/v1/snapshots` | List all available snapshot dates with item counts |
+| `GET` | `/api/v1/snapshots/diff` | Compare two snapshots (`?from_date=&to_date=`, YYYY-MM-DD) |
+
+## Daily snapshots & change reports
+
+After each Jira sync, the backend automatically takes a **daily snapshot** of all roadmap items. If a snapshot for today already exists (e.g. from an earlier hourly sync), the step is skipped — so you get exactly **one snapshot per day**, regardless of sync frequency.
+
+### How it works
+
+1. The `roadmap_snapshot` table stores a full copy of every `roadmap_item` row, tagged with `snapshot_date`.
+2. Product name and department are **denormalized** into the snapshot so reports remain accurate even if products are renamed/deleted later.
+3. The health color is extracted from `color_status->'health'->>'color'` into a plain `VARCHAR` column for easy querying.
+
+### Querying changes
+
+**List available snapshots:**
+```bash
+curl http://localhost:8000/api/v1/snapshots
+```
+
+**Compare two dates (biweekly report):**
+```bash
+curl "http://localhost:8000/api/v1/snapshots/diff?from_date=2026-02-01&to_date=2026-02-15"
+```
+
+The diff response contains four lists:
+
+| Field | Description |
+|-------|-------------|
+| `turned_red` | Items whose color changed **to** red (subset of `color_changes`) |
+| `color_changes` | All items whose color changed between the two dates |
+| `disappeared` | Items present on `from_date` but **missing** on `to_date` |
+| `appeared` | Items present on `to_date` but **not** on `from_date` |
+
+### Storage estimate
+
+With 2,500 roadmap items and one snapshot per day: ~912K rows/year (~a few MB). PostgreSQL handles this trivially.
 
 ## Project structure
 

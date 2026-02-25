@@ -3,6 +3,7 @@
 Two-phase approach:
   1. ``sync_jira_data``      — fetch issues via JQL and upsert raw JSON into ``jira_issue_raw``.
   2. ``process_raw_jira_data`` — read unprocessed rows, derive roadmap fields, upsert into ``roadmap_item``.
+  3. ``take_daily_snapshot``  — once per day, snapshot all ``roadmap_item`` rows for change-tracking.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
+from datetime import date
 
 from jira import JIRA
 
@@ -34,10 +36,9 @@ def _build_jql() -> str:
     Returns a JQL string like:
         ``project in (JUJU, KU, DPE) AND issuetype = Epic AND labels in (26.04, 26.10)``
     """
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT DISTINCT jira_project_key FROM product_jira_source ORDER BY jira_project_key")
-            project_keys = [row[0] for row in cur.fetchall()]
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT DISTINCT jira_project_key FROM product_jira_source ORDER BY jira_project_key")
+        project_keys = [row[0] for row in cur.fetchall()]
 
     if not project_keys:
         raise RuntimeError(
@@ -81,7 +82,6 @@ def sync_jira_data() -> int:
     parent_ranks: dict[str, str] = {}
     fetched_parent_keys = parent_keys.copy()
     # Remove parents that are already in the fetched issues
-    issue_keys = {issue.key for issue in issues}
     for issue in issues:
         if issue.key in parent_keys:
             rank = (issue.raw.get("fields") or {}).get("customfield_10019", "")
@@ -333,3 +333,66 @@ def process_raw_jira_data() -> int:
 
     logger.info("Processed %d raw issues into roadmap_item", len(raw_issues))
     return len(raw_issues)
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 — daily snapshot for change-tracking
+# ---------------------------------------------------------------------------
+
+
+def take_daily_snapshot(snapshot_date: date | None = None) -> int:
+    """Snapshot all current roadmap_item rows into ``roadmap_snapshot``.
+
+    Called after each sync.  If today's snapshot already exists, this is a
+    no-op so that hourly syncs don't create duplicate data.
+
+    Args:
+        snapshot_date: Override the date (useful for tests).  Defaults to today.
+
+    Returns:
+        The number of rows inserted, or 0 if a snapshot already existed.
+    """
+    if snapshot_date is None:
+        snapshot_date = date.today()
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            # Check if today's snapshot already exists
+            cur.execute(
+                "SELECT 1 FROM roadmap_snapshot WHERE snapshot_date = %s LIMIT 1",
+                (snapshot_date,),
+            )
+            if cur.fetchone():
+                logger.info("Snapshot for %s already exists — skipping", snapshot_date)
+                return 0
+
+            # Insert a snapshot of every roadmap_item + its product info
+            cur.execute(
+                """
+                INSERT INTO roadmap_snapshot
+                    (snapshot_date, jira_key, title, status, color, release,
+                     tags, product_id, product_name, department,
+                     parent_key, parent_summary)
+                SELECT
+                    %s,
+                    r.jira_key,
+                    r.title,
+                    r.status,
+                    r.color_status->'health'->>'color',
+                    r.release,
+                    r.tags,
+                    r.product_id,
+                    p.name,
+                    p.department,
+                    r.parent_key,
+                    r.parent_summary
+                FROM roadmap_item r
+                LEFT JOIN product p ON p.id = r.product_id
+                """,
+                (snapshot_date,),
+            )
+            count = cur.rowcount
+        conn.commit()
+
+    logger.info("Snapshot for %s created — %d items captured", snapshot_date, count)
+    return count
