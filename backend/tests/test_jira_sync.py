@@ -51,6 +51,58 @@ def test_process_creates_roadmap_item():
     assert row[3] == "25.10"
 
 
+def test_process_extracts_parent():
+    """Parent key and summary are extracted from the raw Jira data."""
+    _insert_raw_issue(
+        "MOCK-P1",
+        {
+            "summary": "Child epic",
+            "status": {"name": "Open"},
+            "labels": ["25.10"],
+            "parent": {
+                "key": "ROCK-100",
+                "fields": {"summary": "Improve performance"},
+            },
+        },
+    )
+
+    process_raw_jira_data()
+
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT parent_key, parent_summary FROM roadmap_item WHERE jira_key = 'MOCK-P1'"
+        )
+        row = cur.fetchone()
+
+    assert row is not None
+    assert row[0] == "ROCK-100"
+    assert row[1] == "Improve performance"
+
+
+def test_process_no_parent():
+    """Items without a parent have NULL parent fields."""
+    _insert_raw_issue(
+        "MOCK-P2",
+        {
+            "summary": "Orphan epic",
+            "status": {"name": "Open"},
+            "labels": [],
+        },
+    )
+
+    process_raw_jira_data()
+
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT parent_key, parent_summary FROM roadmap_item WHERE jira_key = 'MOCK-P2'"
+        )
+        row = cur.fetchone()
+
+    assert row is not None
+    assert row[0] is None
+    assert row[1] is None
+
+
 def test_process_marks_as_processed():
     """After processing, the raw row has a non-NULL processed_at."""
     _insert_raw_issue("MOCK-2", {"summary": "Test", "status": {"name": "Open"}, "labels": []})

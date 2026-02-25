@@ -199,21 +199,33 @@ def process_raw_jira_data() -> int:
                 fix_versions = fields.get("fixVersions") or []
                 release = fix_versions[0].get("name") if fix_versions else None
 
+                # Extract parent (objective) key and summary
+                parent = fields.get("parent")
+                parent_key = None
+                parent_summary = None
+                if isinstance(parent, dict):
+                    parent_key = parent.get("key")
+                    parent_fields = parent.get("fields") or {}
+                    parent_summary = parent_fields.get("summary")
+
                 cur.execute(
                     """
                     INSERT INTO roadmap_item
-                        (jira_key, title, description, status, release, tags, product_id, color_status, url)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        (jira_key, title, description, status, release, tags, product_id,
+                         color_status, url, parent_key, parent_summary)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (jira_key) DO UPDATE SET
-                        title        = EXCLUDED.title,
-                        description  = EXCLUDED.description,
-                        status       = EXCLUDED.status,
-                        release      = EXCLUDED.release,
-                        tags         = EXCLUDED.tags,
-                        product_id   = EXCLUDED.product_id,
-                        color_status = EXCLUDED.color_status,
-                        url          = EXCLUDED.url,
-                        updated_at   = now();
+                        title           = EXCLUDED.title,
+                        description     = EXCLUDED.description,
+                        status          = EXCLUDED.status,
+                        release         = EXCLUDED.release,
+                        tags            = EXCLUDED.tags,
+                        product_id      = EXCLUDED.product_id,
+                        color_status    = EXCLUDED.color_status,
+                        url             = EXCLUDED.url,
+                        parent_key      = EXCLUDED.parent_key,
+                        parent_summary  = EXCLUDED.parent_summary,
+                        updated_at      = now();
                     """,
                     (
                         jira_key,
@@ -225,6 +237,8 @@ def process_raw_jira_data() -> int:
                         product_id,
                         json.dumps(color_status),
                         f"{settings.jira_url}/browse/{jira_key}",
+                        parent_key,
+                        parent_summary,
                     ),
                 )
 

@@ -36,19 +36,33 @@ CREATE TABLE IF NOT EXISTS product_jira_source (
 
 -- Processed roadmap items ready for the API
 CREATE TABLE IF NOT EXISTS roadmap_item (
-    id           SERIAL       PRIMARY KEY,
-    jira_key     VARCHAR(64)  NOT NULL UNIQUE,
-    title        VARCHAR(512) NOT NULL,
-    description  TEXT,
-    status       VARCHAR(64)  NOT NULL,
-    release      VARCHAR(64),
-    tags         TEXT[],
-    product_id   INTEGER      REFERENCES product(id),
-    color_status JSONB,
-    url          TEXT,
-    created_at   TIMESTAMPTZ  NOT NULL DEFAULT now(),
-    updated_at   TIMESTAMPTZ  NOT NULL DEFAULT now()
+    id              SERIAL       PRIMARY KEY,
+    jira_key        VARCHAR(64)  NOT NULL UNIQUE,
+    title           VARCHAR(512) NOT NULL,
+    description     TEXT,
+    status          VARCHAR(64)  NOT NULL,
+    release         VARCHAR(64),
+    tags            TEXT[],
+    product_id      INTEGER      REFERENCES product(id),
+    color_status    JSONB,
+    url             TEXT,
+    parent_key      VARCHAR(64),   -- parent (objective) Jira key, e.g. "ROCK-100"
+    parent_summary  VARCHAR(512),  -- parent (objective) summary / title
+    created_at      TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
+
+-- Add parent columns if table already existed without them
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'roadmap_item' AND column_name = 'parent_key'
+    ) THEN
+        ALTER TABLE roadmap_item ADD COLUMN parent_key VARCHAR(64);
+        ALTER TABLE roadmap_item ADD COLUMN parent_summary VARCHAR(512);
+    END IF;
+END $$;
 
 -- Seed a catch-all product so FK never fails
 INSERT INTO product (name, department)

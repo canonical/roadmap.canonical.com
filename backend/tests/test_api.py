@@ -215,7 +215,7 @@ def test_roadmap_page_empty(client):
 
 
 def test_roadmap_page_with_data(client):
-    """Items with cycle labels appear in the rendered HTML grouped by cycle then product."""
+    """Items with cycle labels appear in the rendered HTML grouped by cycle then objective."""
     color = json.dumps({"health": {"color": "green"}, "carry_over": None})
     uncat_id = _get_uncategorized_id()
     with get_db_connection() as conn:
@@ -237,7 +237,35 @@ def test_roadmap_page_with_data(client):
     assert "HTML-1" in resp.text
     assert "Render test" in resp.text
     assert "Cycle 25.10" in resp.text
-    assert "Uncategorized" in resp.text
+    assert "No objective" in resp.text
+
+
+def test_roadmap_page_with_parent(client):
+    """Items with a parent show up grouped by objective (parent summary only)."""
+    color = json.dumps({"health": {"color": "green"}, "carry_over": None})
+    uncat_id = _get_uncategorized_id()
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO roadmap_item
+                    (jira_key, title, status, tags, product_id, color_status, url,
+                     parent_key, parent_summary)
+                VALUES
+                    ('OBJ-1', 'Child epic', 'In Progress', ARRAY['25.10'],
+                     %s, %s, 'http://jira/OBJ-1', 'ROCK-100', 'Improve performance')
+                """,
+                (uncat_id, color),
+            )
+        conn.commit()
+
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert "OBJ-1" in resp.text
+    # Objective heading shows summary, not the Jira key
+    assert "Improve performance" in resp.text
+    # The link to the parent issue is present
+    assert "/browse/ROCK-100" in resp.text
 
 
 def test_roadmap_page_hides_items_without_cycle(client):

@@ -62,20 +62,17 @@
     /* ── cycle columns (auto-generated) ─────────────────────────────── */
     .cycle-header { min-width: 4rem; text-align: center; }
 
-    /* ── cycle → product grid layout ────────────────────────────────── */
+    /* ── cycle → objective layout ──────────────────────────────────── */
     .cycle-section { margin-bottom: 2.5rem; }
     .cycle-section h2 { margin-bottom: .75rem; }
 
     .product-grid {
       display: flex;
+      flex-direction: column;
       gap: 1.5rem;
-      flex-wrap: wrap;
-      align-items: flex-start;
     }
     .product-column {
-      flex: 1 1 0;
-      min-width: 20rem;
-      max-width: 50rem;
+      width: 100%;
     }
     .product-column h4 { margin-bottom: .25rem; }
 
@@ -85,6 +82,12 @@
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+    .jira-link {
+      margin-left: .35rem;
+      vertical-align: middle;
+      opacity: .5;
+    }
+    .jira-link:hover { opacity: 1; }
   </style>
 
   {% block head %}{% endblock %}
