@@ -447,10 +447,10 @@ def _query_roadmap_items(
     query = (
         "SELECT r.id, r.jira_key, r.title, p.name AS product, "
         "       r.color_status, r.url, r.tags, "
-        "       r.parent_key, r.parent_summary "
+        "       r.parent_key, r.parent_summary, r.rank, r.parent_rank "
         "FROM roadmap_item r "
         f"JOIN product p ON p.id = r.product_id{where} "
-        "ORDER BY r.parent_summary NULLS LAST, r.title"
+        "ORDER BY r.parent_rank NULLS LAST, r.rank NULLS LAST, r.title"
     )
 
     with get_db_connection() as conn, conn.cursor() as cur:
@@ -495,13 +495,16 @@ def _query_roadmap_items(
         for c in item_cycles:
             raw.setdefault(c, {}).setdefault(objective_label, []).append(item)
 
-    # Sort: cycles newest-first, objectives alphabetically (but "No objective" last)
+    # Sort: cycles newest-first, objectives by parent_rank ("No objective" last)
     grouped: OrderedDict[str, OrderedDict[str, list[dict]]] = OrderedDict()
     for c in sorted(raw.keys(), reverse=True):
         objectives = raw[c]
         sorted_keys = sorted(
             objectives.keys(),
-            key=lambda k: (k == "No objective", k),
+            key=lambda k: (
+                k == "No objective",
+                min((item.get("parent_rank") or "\xff") for item in objectives[k]),
+            ),
         )
         grouped[c] = OrderedDict((k, objectives[k]) for k in sorted_keys)
 
