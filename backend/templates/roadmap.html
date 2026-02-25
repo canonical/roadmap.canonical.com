@@ -21,7 +21,6 @@
     <div class="p-form__group">
       <label for="product">Product</label>
       <select name="product" id="product" class="p-form-validation__input">
-        <option value="">All products</option>
         {% for p in products %}
           <option value="{{ p }}" {{ 'selected' if p == selected_product }}>{{ p }}</option>
         {% endfor %}
@@ -76,7 +75,7 @@
           <thead>
             <tr>
               <th style="width:5rem">Carry-over</th>
-              <th style="width:3.5rem">Health</th>
+              <th style="width:3.5rem"></th>
               <th>Summary</th>
               <th style="width:7rem">Jira key</th>
             </tr>
@@ -114,11 +113,45 @@
 
 {% block scripts %}
 <script>
-  // Auto-submit on filter change for a snappier UX
-  document.querySelectorAll('.filter-bar select').forEach(function(sel) {
-    sel.addEventListener('change', function() {
-      sel.closest('form').submit();
+  // Department → products mapping from the server
+  var deptProducts = {{ dept_products_json | safe }};
+
+  var deptSelect = document.getElementById('department');
+  var productSelect = document.getElementById('product');
+  var form = document.querySelector('.filter-bar');
+
+  // When department changes, rebuild the product dropdown and auto-submit
+  deptSelect.addEventListener('change', function() {
+    var dept = deptSelect.value;
+    var products;
+
+    if (dept && deptProducts[dept]) {
+      products = deptProducts[dept];
+    } else {
+      // No department selected: merge all products (sorted)
+      var all = [];
+      Object.keys(deptProducts).forEach(function(d) {
+        deptProducts[d].forEach(function(p) {
+          if (all.indexOf(p) === -1) all.push(p);
+        });
+      });
+      products = all.sort();
+    }
+
+    // Rebuild options — always select the first product (no "All" option)
+    productSelect.innerHTML = '';
+    products.forEach(function(p) {
+      var opt = document.createElement('option');
+      opt.value = p;
+      opt.textContent = p;
+      productSelect.appendChild(opt);
     });
+
+    form.submit();
   });
+
+  // Auto-submit on product or cycle change
+  productSelect.addEventListener('change', function() { form.submit(); });
+  document.getElementById('cycle').addEventListener('change', function() { form.submit(); });
 </script>
 {% endblock %}

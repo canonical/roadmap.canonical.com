@@ -383,14 +383,28 @@ def delete_product(product_id: int):
 CYCLE_RE = re.compile(r"^\d{2}\.\d{2}$")
 
 
-def _query_filter_options() -> dict:
-    """Fetch distinct departments, products, and cycle labels for filter dropdowns."""
+def _query_filter_options(department: str | None = None) -> dict:
+    """Fetch distinct departments, products (filtered by department), and cycle labels for filter dropdowns.
+
+    Also returns a ``dept_products`` mapping (department → [product names]) so the
+    frontend can dynamically update the product dropdown when the department changes.
+    """
     with get_db_connection() as conn, conn.cursor() as cur:
         cur.execute("SELECT DISTINCT department FROM product ORDER BY department")
         departments = [r[0] for r in cur.fetchall()]
 
-        cur.execute("SELECT DISTINCT name FROM product ORDER BY name")
+        # Products for the selected department (or all if none selected)
+        if department:
+            cur.execute("SELECT DISTINCT name FROM product WHERE department = %s ORDER BY name", (department,))
+        else:
+            cur.execute("SELECT DISTINCT name FROM product ORDER BY name")
         products = [r[0] for r in cur.fetchall()]
+
+        # Full department → products mapping for client-side filtering
+        cur.execute("SELECT department, name FROM product ORDER BY department, name")
+        dept_products: dict[str, list[str]] = {}
+        for r in cur.fetchall():
+            dept_products.setdefault(r[0], []).append(r[1])
 
         # Cycles come from the tags array (labels) on roadmap_item.
         # unnest expands the array; we then filter for XX.XX pattern in Python.
@@ -401,7 +415,7 @@ def _query_filter_options() -> dict:
             reverse=True,
         )
 
-    return {"departments": departments, "products": products, "cycles": cycles}
+    return {"departments": departments, "products": products, "cycles": cycles, "dept_products": dept_products}
 
 
 def _query_roadmap_items(
@@ -483,7 +497,13 @@ def roadmap_page(
     cycle: str | None = Query(None),
 ):
     """Render the main roadmap page with server-side Jinja2 templates."""
-    options = _query_filter_options()
+    options = _query_filter_options(department=department)
+
+    # Force a product selection — if none chosen, default to the first available
+    available_products = options["products"]
+    if not product or product not in available_products:
+        product = available_products[0] if available_products else None
+
     grouped_items = _query_roadmap_items(department=department, product=product, cycle=cycle)
 
     return templates.TemplateResponse(
@@ -491,8 +511,9 @@ def roadmap_page(
         "roadmap.html",
         {
             "departments": options["departments"],
-            "products": options["products"],
+            "products": available_products,
             "cycles": options["cycles"],
+            "dept_products_json": json.dumps(options["dept_products"]),
             "selected_department": department or "",
             "selected_product": product or "",
             "selected_cycle": cycle or "",
