@@ -46,29 +46,39 @@
   </form>
 
   {# ── Legend (clickable filters) ───────────────────────────────── #}
-  <div id="legend-bar" class="u-sv1" style="display:flex;gap:1rem;flex-wrap:wrap;font-size:.875rem;align-items:center;">
+  <div id="legend-bar" class="u-sv1" style="display:flex;gap:1rem;flex-wrap:wrap;font-size:.875rem;align-items:flex-start;">
     <span class="legend-filter" data-health="completed">
       <span class="color-cell color-cell--green">C</span> Completed
+      <span class="legend-stat"></span>
     </span>
     <span class="legend-filter" data-health="in-progress">
       <span class="color-cell color-cell--green">&nbsp;</span> In Progress
+      <span class="legend-stat"></span>
     </span>
     <span class="legend-filter" data-health="at-risk">
       <span class="color-cell color-cell--orange">&nbsp;</span> At Risk
+      <span class="legend-stat"></span>
     </span>
     <span class="legend-filter" data-health="rejected">
       <span class="color-cell color-cell--red">&nbsp;</span> Excluded
+      <span class="legend-stat"></span>
     </span>
     <span class="legend-filter" data-health="added">
       <span class="color-cell color-cell--blue">&nbsp;</span> Added
+      <span class="legend-stat"></span>
     </span>
     <span class="legend-filter" data-health="dropped">
       <span class="color-cell color-cell--black">&nbsp;</span> Dropped
+      <span class="legend-stat"></span>
     </span>
     <span class="legend-filter" data-health="unknown">
       <span class="color-cell color-cell--white">&nbsp;</span> Inactive
+      <span class="legend-stat"></span>
     </span>
-    <span><span class="carry-over-badge">2</span> Carry-over count</span>
+    <span class="legend-item-static">
+      <span class="carry-over-badge">№</span>
+      Carry-over count
+    </span>
   </div>
 
   <hr />
@@ -241,6 +251,29 @@
     var legendItems = document.querySelectorAll('.legend-filter[data-health]');
     var allRows = document.querySelectorAll('tr[data-health]');
 
+    function updateStats() {
+      // Count ALL rows per health status (ignores legend toggle visibility)
+      var counts = {};
+      var total = 0;
+      legendItems.forEach(function(el) { counts[el.getAttribute('data-health')] = 0; });
+
+      allRows.forEach(function(row) {
+        var hid = row.getAttribute('data-health');
+        if (counts[hid] !== undefined) counts[hid]++;
+        total++;
+      });
+
+      // Update each legend button's inline stat
+      legendItems.forEach(function(el) {
+        var hid = el.getAttribute('data-health');
+        var stat = el.querySelector('.legend-stat');
+        if (!stat) return;
+        var c = counts[hid] || 0;
+        var pct = total > 0 ? Math.round(c / total * 100) : 0;
+        stat.textContent = c + ' (' + pct + '%)';
+      });
+    }
+
     function applyFilter() {
       var filtering = activeFilters.size > 0;
 
@@ -296,6 +329,9 @@
         applyFilter();
       });
     });
+
+    // Initial stats on page load
+    updateStats();
   })();
 </script>
 {% endblock %}
