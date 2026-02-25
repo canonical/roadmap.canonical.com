@@ -62,22 +62,29 @@
     <p class="p-heading--4 u-text--muted">No roadmap items match the current filters.</p>
   {% endif %}
 
-  {% for cycle_name, products_map in grouped_items.items() %}
+  {% for cycle_name, objectives_map in grouped_items.items() %}
   <section class="cycle-section">
     <h2>Cycle {{ cycle_name }}</h2>
 
     <div class="product-grid">
-      {% for product_name, items in products_map.items() %}
+      {% for objective_label, items in objectives_map.items() %}
       <div class="product-column">
-        <h4>{{ product_name }} <span class="p-badge">{{ items | length }}</span></h4>
+        <h4>
+          {{ objective_label }}
+          {% if objective_label in objective_urls %}
+            <a href="{{ objective_urls[objective_label] }}" target="_blank" rel="noopener" class="jira-link" title="Open in Jira">
+              <i class="p-icon--external-link"></i>
+            </a>
+          {% endif %}
+          <span class="p-badge">{{ items | length }}</span>
+        </h4>
 
-        <table class="p-table--sortable" role="grid" style="table-layout:fixed;width:100%;">
+        <table class="p-table--sortable" role="grid" style="table-layout:fixed;max-width:50rem;">
           <thead>
             <tr>
               <th style="width:4rem">Carry-over</th>
               <th style="width:3.5rem"></th>
               <th>Summary</th>
-              <th style="width:5rem">Jira URL</th>
             </tr>
           </thead>
           <tbody>
@@ -95,9 +102,11 @@
                   </span>
                 {% endif %}
               </td>
-              <td class="summary-cell" title="{{ item.title }}">{{ item.title | truncate(90, True, '…') }}</td>
-              <td>
-                <a href="{{ item.url }}" target="_blank" rel="noopener">{{ item.jira_key }}</a>
+              <td class="summary-cell" title="{{ item.title }}">
+                {{ item.title | truncate(90, True, '…') }}
+                <a href="{{ item.url }}" target="_blank" rel="noopener" title="{{ item.jira_key }}" class="jira-link">
+                  <i class="p-icon--external-link"></i>
+                </a>
               </td>
             </tr>
             {% endfor %}

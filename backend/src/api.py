@@ -175,7 +175,8 @@ def get_roadmap(
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     query = (
         "SELECT r.id, r.jira_key, r.title, r.description, r.status, r.release, r.tags, "
-        "       p.name AS product, r.color_status, r.url, r.created_at, r.updated_at "
+        "       p.name AS product, r.color_status, r.url, "
+        "       r.parent_key, r.parent_summary, r.created_at, r.updated_at "
         "FROM roadmap_item r "
         f"LEFT JOIN product p ON p.id = r.product_id{where} "
         "ORDER BY r.updated_at DESC"
@@ -423,11 +424,12 @@ def _query_roadmap_items(
     product: str | None = None,
     cycle: str | None = None,
 ) -> OrderedDict[str, OrderedDict[str, list[dict]]]:
-    """Return roadmap items grouped by cycle → product.
+    """Return roadmap items grouped by cycle → objective (parent).
 
-    Structure: ``{cycle: {product: [items]}}``
+    Structure: ``{cycle: {objective_label: [items]}}``
     - Cycles sorted newest-first.
-    - Products sorted alphabetically within each cycle.
+    - Objectives sorted alphabetically within each cycle.
+    - Items with no parent are grouped under "No objective".
     - Items with no cycle labels are excluded.
     - An item with multiple cycle labels appears in each bucket.
     """
@@ -444,10 +446,11 @@ def _query_roadmap_items(
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     query = (
         "SELECT r.id, r.jira_key, r.title, p.name AS product, "
-        "       r.color_status, r.url, r.tags "
+        "       r.color_status, r.url, r.tags, "
+        "       r.parent_key, r.parent_summary "
         "FROM roadmap_item r "
         f"JOIN product p ON p.id = r.product_id{where} "
-        "ORDER BY p.name, r.title"
+        "ORDER BY r.parent_summary NULLS LAST, r.title"
     )
 
     with get_db_connection() as conn, conn.cursor() as cur:
@@ -455,8 +458,9 @@ def _query_roadmap_items(
         columns = [desc[0] for desc in cur.description]
         rows = cur.fetchall()
 
-    # Build cycle → product → items mapping
+    # Build cycle → objective → items mapping
     raw: dict[str, dict[str, list[dict]]] = {}
+    objective_urls: dict[str, str] = {}  # objective_label → Jira URL
 
     for row in rows:
         item = dict(zip(columns, row, strict=False))
@@ -477,16 +481,31 @@ def _query_roadmap_items(
                 continue
             item_cycles = [cycle]
 
-        product_name = item["product"]
-        for c in item_cycles:
-            raw.setdefault(c, {}).setdefault(product_name, []).append(item)
+        # Group by objective (parent summary) instead of product
+        parent_key = item.get("parent_key")
+        parent_summary = item.get("parent_summary")
+        if parent_key and parent_summary:
+            objective_label = parent_summary
+            objective_urls[objective_label] = f"{settings.jira_url}/browse/{parent_key}"
+        else:
+            objective_label = "No objective"
 
-    # Sort: cycles newest-first, products alphabetically within each cycle
+        item["_objective"] = objective_label
+
+        for c in item_cycles:
+            raw.setdefault(c, {}).setdefault(objective_label, []).append(item)
+
+    # Sort: cycles newest-first, objectives alphabetically (but "No objective" last)
     grouped: OrderedDict[str, OrderedDict[str, list[dict]]] = OrderedDict()
     for c in sorted(raw.keys(), reverse=True):
-        grouped[c] = OrderedDict(sorted(raw[c].items()))
+        objectives = raw[c]
+        sorted_keys = sorted(
+            objectives.keys(),
+            key=lambda k: (k == "No objective", k),
+        )
+        grouped[c] = OrderedDict((k, objectives[k]) for k in sorted_keys)
 
-    return grouped
+    return grouped, objective_urls
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -504,7 +523,7 @@ def roadmap_page(
     if not product or product not in available_products:
         product = available_products[0] if available_products else None
 
-    grouped_items = _query_roadmap_items(department=department, product=product, cycle=cycle)
+    grouped_items, objective_urls = _query_roadmap_items(department=department, product=product, cycle=cycle)
 
     return templates.TemplateResponse(
         request,
@@ -518,5 +537,6 @@ def roadmap_page(
             "selected_product": product or "",
             "selected_cycle": cycle or "",
             "grouped_items": grouped_items,
+            "objective_urls": objective_urls,
         },
     )
