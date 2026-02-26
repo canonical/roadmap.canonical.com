@@ -15,7 +15,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
+from starlette.middleware.sessions import SessionMiddleware
+from starlette.responses import RedirectResponse
 
+from .auth import configure_oauth, handle_callback, is_authenticated, login_redirect
 from .database import get_db_connection
 from .jira_sync import _build_jql, process_raw_jira_data, sync_jira_data, take_daily_snapshot
 from .settings import settings
@@ -60,11 +63,27 @@ async def lifespan(application: FastAPI):
             cur.execute(sql)
         conn.commit()
     logger.info("Database schema applied")
+
+    # Configure OIDC (Authlib)
+    if settings.oidc_client_id:
+        configure_oauth()
+        logger.info("  OIDC issuer   = %s", settings.oidc_issuer)
+    else:
+        logger.warning("  OIDC_CLIENT_ID is empty — authentication disabled")
+
     yield
 
 
 app = FastAPI(title="Roadmap API", version="0.1.0", lifespan=lifespan)
 
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=settings.session_secret,
+    session_cookie="roadmap_session",
+    max_age=86400,  # 24 hours
+    same_site="lax",
+    https_only=False,  # set True when served behind HTTPS
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # tighten in production
@@ -119,6 +138,24 @@ def _run_full_sync() -> None:
         _sync_status["error"] = str(exc)
     finally:
         _sync_status["last_sync_end"] = datetime.now(UTC).isoformat()
+
+
+# ---------------------------------------------------------------------------
+# Authentication endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/login")
+async def login(request: Request):
+    """Redirect to the OIDC provider for login."""
+    if not settings.oidc_client_id:
+        raise HTTPException(status_code=501, detail="OIDC not configured")
+    return await login_redirect(request)
+
+
+@app.get("/callback")
+async def callback(request: Request):
+    """Handle the OIDC callback (authorization code exchange)."""
+    return await handle_callback(request)
 
 
 # ---------------------------------------------------------------------------
@@ -653,6 +690,10 @@ def roadmap_page(
     cycle: list[str] | None = Query(None),
 ):
     """Render the main roadmap page with server-side Jinja2 templates."""
+    # Require authentication when OIDC is configured
+    if settings.oidc_client_id and not is_authenticated(request):
+        return RedirectResponse(url="/login")
+
     options = _query_filter_options(department=department)
 
     # Force a product selection — if none chosen, default to the first available
