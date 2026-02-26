@@ -15,8 +15,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
-from starlette.responses import RedirectResponse
+from starlette.responses import JSONResponse, RedirectResponse
 
 from .auth import configure_oauth, handle_callback, is_authenticated, login_redirect
 from .database import get_db_connection
@@ -74,8 +75,35 @@ async def lifespan(application: FastAPI):
     yield
 
 
+# Paths that must be accessible without authentication
+_PUBLIC_PATHS = {"/login", "/callback"}
+
+
+class OIDCAuthMiddleware(BaseHTTPMiddleware):
+    """Enforce OIDC authentication on all routes except /login and /callback.
+
+    - Browser requests (HTML pages) → redirect to /login
+    - API requests (/api/*) → return 401 JSON
+    - Disabled entirely when OIDC_CLIENT_ID is empty
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        if settings.oidc_client_id and request.url.path not in _PUBLIC_PATHS:
+            if not is_authenticated(request):
+                if request.url.path.startswith("/api/"):
+                    return JSONResponse(
+                        status_code=401,
+                        content={"detail": "Authentication required"},
+                    )
+                return RedirectResponse(url="/login")
+        return await call_next(request)
+
+
 app = FastAPI(title="Roadmap API", version="0.1.0", lifespan=lifespan)
 
+# Middleware order: add_middleware uses a stack, so the LAST added is the
+# OUTERMOST (runs first).  We need: CORS → Session → OIDCAuth (innermost).
+app.add_middleware(OIDCAuthMiddleware)
 app.add_middleware(
     SessionMiddleware,
     secret_key=settings.session_secret,
@@ -690,10 +718,6 @@ def roadmap_page(
     cycle: list[str] | None = Query(None),
 ):
     """Render the main roadmap page with server-side Jinja2 templates."""
-    # Require authentication when OIDC is configured
-    if settings.oidc_client_id and not is_authenticated(request):
-        return RedirectResponse(url="/login")
-
     options = _query_filter_options(department=department)
 
     # Force a product selection — if none chosen, default to the first available
