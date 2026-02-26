@@ -23,7 +23,7 @@ def _setup_test_database():
     # Test DB runs on port 5433 via docker-compose db-test service
     db_host = os.environ.get("DB_TEST_HOST", "localhost")
     db_port = os.environ.get("DB_TEST_PORT", "5433")
-    os.environ["DATABASE_URL"] = f"postgresql://roadmap:roadmap@{db_host}:{db_port}/roadmap_test"
+    os.environ["POSTGRESQL_DB_CONNECT_STRING"] = f"postgresql://roadmap:roadmap@{db_host}:{db_port}/roadmap_test"
 
     # Force settings to re-read from env
     import src.settings as settings_mod

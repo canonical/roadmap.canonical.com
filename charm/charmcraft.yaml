@@ -1,0 +1,48 @@
+name: canonical-roadmap
+
+type: charm
+
+base: ubuntu@24.04
+
+# the platforms this charm should be built on and run on.
+# you can check your architecture with `dpkg --print-architecture`
+platforms:
+  amd64:
+  # arm64:
+  # ppc64el:
+  # s390x:
+
+summary: FastAPI web service of roadmap.canonical.com
+description: |
+  Read more about the project on https://github.com/canonical/roadmap.canonical.com
+
+extensions:
+  - fastapi-framework
+
+requires:
+  postgresql:
+    interface: postgresql_client
+    optional: false
+    limit: 1
+
+config:
+  options:
+    jira-url:
+      description: |
+        The base URL of the Jira instance.
+      default: "https://xxx.atlassian.net"
+      type: string
+    jira-username:
+      description: |
+        The username (email) used to authenticate with Jira.
+      type: string
+    jira-pat:
+      description: |
+        The Jira Personal Access Token used for authentication.
+      type: string
+    jql-filter:
+      description: |
+        The JQL filter used to query Jira issues.
+      default: "issuetype = Epic"
+      type: string
+
