@@ -1,6 +1,7 @@
 """Application settings loaded from environment variables."""
 
 import pathlib
+import secrets
 
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
@@ -38,6 +39,32 @@ class Settings(BaseSettings):
     jql_filter: str = Field(
         default='issuetype = Epic AND labels in (26.04, 26.10) AND "Properties[Checkboxes]" = "Roadmap Item"',
         validation_alias=AliasChoices("jql_filter", "APP_JQL_FILTER"),
+    )
+
+    # ── OIDC / OAuth 2.0 ────────────────────────────────────────────
+    # Set via juju config/secrets → charm injects as APP_OIDC_* env vars.
+    # For local dev, set the plain names in .env.
+    oidc_client_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("oidc_client_id", "APP_OIDC_CLIENT_ID"),
+    )
+    oidc_client_secret: str = Field(
+        default="",
+        validation_alias=AliasChoices("oidc_client_secret", "APP_OIDC_CLIENT_SECRET"),
+    )
+    oidc_issuer: str = Field(
+        default="https://iam.green.canonical.com",
+        validation_alias=AliasChoices("oidc_issuer", "APP_OIDC_ISSUER"),
+    )
+    oidc_redirect_uri: str = Field(
+        default="http://localhost:8000/callback",
+        validation_alias=AliasChoices("oidc_redirect_uri", "APP_OIDC_REDIRECT_URI"),
+    )
+    # Secret key used to sign the session cookie.
+    # A random default is generated at startup; set explicitly for multi-replica deployments.
+    session_secret: str = Field(
+        default_factory=lambda: secrets.token_urlsafe(32),
+        validation_alias=AliasChoices("session_secret", "APP_SESSION_SECRET"),
     )
 
     model_config = {"env_file": str(_ENV_FILE), "extra": "ignore"}

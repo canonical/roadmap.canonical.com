@@ -237,3 +237,68 @@
 
 ### Test status
 - **67/67 tests pass, 0 new lint errors**
+
+---
+
+## 2026-02-26 — OIDC authentication (transparent SSO for internal users)
+
+### What was built
+- **OIDC integration** using [Authlib](https://docs.authlib.org/en/latest/) with Starlette's
+  `SessionMiddleware` for signed cookie-based sessions.
+- **New module `src/auth.py`** — configures the Authlib OAuth registry, provides
+  `is_authenticated()`, `login_redirect()`, and `handle_callback()` helpers.
+- **Three new routes**: `/login` (redirects to IdP), `/callback` (exchanges auth code),
+  and `GET /` now requires authentication when OIDC is configured.
+- **Transparent SSO flow**: unauthenticated users hitting `/` are automatically redirected
+  through the IdP — no login page, no login button. If the user already has a corporate
+  SSO session the authentication is completely silent.
+- **No logout**: this is an internal-only tool; users stay authenticated via their
+  corporate SSO session. The session cookie expires after 24 hours, after which the
+  next visit silently re-authenticates.
+- **Graceful disable**: when `OIDC_CLIENT_ID` is empty (default), authentication is
+  completely disabled — convenient for local development.
+
+### OIDC provider details
+- Issuer: `https://iam.green.canonical.com` (Hydra-based)
+- Discovery: `/.well-known/openid-configuration`
+- Grant type: `authorization_code` + `refresh_token`
+- Scopes requested: `openid email profile`
+
+### New settings (in `settings.py`)
+| Setting | Env var(s) | Default |
+|---------|-----------|---------|
+| `oidc_client_id` | `OIDC_CLIENT_ID` / `APP_OIDC_CLIENT_ID` | `""` (disabled) |
+| `oidc_client_secret` | `OIDC_CLIENT_SECRET` / `APP_OIDC_CLIENT_SECRET` | `""` |
+| `oidc_issuer` | `OIDC_ISSUER` / `APP_OIDC_ISSUER` | `https://iam.green.canonical.com` |
+| `oidc_redirect_uri` | `OIDC_REDIRECT_URI` / `APP_OIDC_REDIRECT_URI` | `http://localhost:8000/callback` |
+| `session_secret` | `SESSION_SECRET` / `APP_SESSION_SECRET` | random on startup |
+
+### Key decisions
+1. **Authlib over python-jose / raw OIDC** — handles discovery, JWKS rotation, token exchange,
+   and Starlette integration out of the box.
+2. **Session in signed cookie** (via `SessionMiddleware`) — no server-side session store needed;
+   `itsdangerous` (transitive dep of Starlette) signs the cookie.
+3. **No explicit `itsdangerous` dependency** — it's pulled in transitively by Starlette;
+   no need to pin it in `pyproject.toml`.
+4. **No logout route** — internal-only app; users rely on corporate SSO session lifecycle.
+5. **API endpoints (`/api/v1/*`) not gated** — they are machine-to-machine; auth can be
+   added later if needed (e.g. via API keys or the same OIDC tokens).
+6. **Auth disabled by default** — empty `OIDC_CLIENT_ID` means no redirects, no middleware
+   interference. Zero friction for local dev.
+
+### Files created
+- `src/auth.py` — OIDC helpers (configure, authenticate, callback)
+
+### Files modified
+- `src/settings.py` — added OIDC + session settings
+- `src/app.py` — added `SessionMiddleware`, OIDC startup config, `/login` + `/callback` routes,
+  auth guard on `GET /`
+- `templates/base.html` — cleaned up (no user display, no logout link)
+- `pyproject.toml` — added `authlib>=1.3,<2`
+- `requirements.txt` — added `authlib==1.4.1`
+- `.env.example` — documented OIDC env vars
+- `README.md` — added Authentication section, updated API reference + project structure
+
+### Dependencies added
+- `authlib>=1.3,<2` (explicit)
+- `itsdangerous` (transitive via Starlette — not pinned)

@@ -21,8 +21,8 @@ This spins up PostgreSQL 16 on port **5432** (user: `roadmap`, password: `roadma
 ### 2. Configure environment
 
 ```bash
-cp backend/.env.example backend/.env
-# Edit backend/.env with your Jira credentials:
+cp .env.example .env
+# Edit .env with your Jira credentials:
 #   JIRA_URL, JIRA_USERNAME, JIRA_PAT, JQL_FILTER
 ```
 
@@ -39,6 +39,36 @@ The app is now at **http://localhost:8000**. Schema is applied automatically on 
 ### 4. Open the roadmap page
 
 Navigate to **http://localhost:8000** in your browser. The page shows filter dropdowns (department, product, cycle) and one table per product group.
+
+## Authentication (OIDC)
+
+The app uses OpenID Connect for authentication. When configured, unauthenticated users are automatically redirected to the identity provider — no login page or button is needed. Once the IdP authenticates the user (silently if they already have a corporate SSO session), they are redirected back and can use the app immediately.
+
+Authentication is **disabled** when `OIDC_CLIENT_ID` is empty (the default), which is convenient for local development.
+
+### Configuration
+
+Add these to your `.env` file:
+
+```bash
+OIDC_CLIENT_ID=your-client-id
+OIDC_CLIENT_SECRET=your-client-secret
+OIDC_ISSUER=https://iam.green.canonical.com
+OIDC_REDIRECT_URI=http://localhost:8000/callback
+SESSION_SECRET=any-random-string
+```
+
+The session cookie (`roadmap_session`) is valid for 24 hours. After expiry the user is silently re-authenticated via the IdP.
+
+### How it works
+
+1. User visits `/` → no session → redirected to `/login`
+2. `/login` redirects to the OIDC authorization endpoint (`OIDC_ISSUER`)
+3. IdP authenticates the user (SSO) and redirects to `/callback`
+4. `/callback` exchanges the authorization code for tokens, stores user info in a signed session cookie
+5. User is redirected back to `/` — now authenticated
+
+There is no logout flow — this is an internal-only tool and users stay authenticated via their corporate SSO session.
 
 ### 5. Trigger a Jira sync
 
@@ -146,7 +176,9 @@ pytest -v
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/` | Server-rendered roadmap page (supports `?department=`, `?product=`, `?cycle=` filters) |
+| `GET` | `/` | Server-rendered roadmap page (requires auth; supports `?department=`, `?product=`, `?cycle=` filters) |
+| `GET` | `/login` | Redirects to OIDC provider (automatic, not user-facing) |
+| `GET` | `/callback` | OIDC callback (exchanges auth code for session) |
 | `POST` | `/api/v1/sync` | Trigger a background Jira sync |
 | `GET` | `/api/v1/status` | Current sync status |
 | `GET` | `/api/v1/roadmap` | JSON list of roadmap items (supports `?product=`, `?status=`, `?release=` filters) |
@@ -198,28 +230,28 @@ With 2,500 roadmap items and one snapshot per day: ~912K rows/year (~a few MB). 
 ```
 roadmap-web/
 ├── docker-compose.yaml          # PostgreSQL for dev + test
-├── backend/
-│   ├── pyproject.toml            # Dependencies & tool config
-│   ├── Dockerfile
-│   ├── .env.example
-│   ├── src/
-│   │   ├── api.py                # FastAPI app, endpoints & HTML page
-│   │   ├── settings.py           # Env var config via pydantic-settings
-│   │   ├── database.py           # DB connection helper
-│   │   ├── db_schema.sql         # Idempotent schema DDL
-│   │   ├── jira_sync.py          # Two-phase Jira sync pipeline
-│   │   └── color_logic.py        # Epic health/color derivation
-│   ├── templates/
-│   │   ├── base.html             # Base layout (Vanilla Framework + nav)
-│   │   └── roadmap.html          # Main roadmap page template
-│   └── tests/
-│       ├── conftest.py           # Fixtures (test DB setup/teardown)
-│       ├── test_api.py           # Endpoint + HTML page tests
-│       ├── test_color_logic.py   # Color derivation unit tests
-│       └── test_jira_sync.py     # Sync pipeline integration tests
-├── constitution.md               # AI coding guidelines
-├── memory.md                     # Architectural state across sessions
-└── reference/                    # Canonical reference project (gitignored)
+├── pyproject.toml               # Dependencies & tool config
+├── .env.example                 # Environment variable reference
+├── src/
+│   ├── app.py                   # FastAPI app, endpoints & HTML page
+│   ├── auth.py                  # OIDC authentication (Authlib)
+│   ├── settings.py              # Env var config via pydantic-settings
+│   ├── database.py              # DB connection helper
+│   ├── db_schema.sql            # Idempotent schema DDL
+│   ├── jira_sync.py             # Two-phase Jira sync pipeline
+│   └── color_logic.py           # Epic health/color derivation
+├── templates/
+│   ├── base.html                # Base layout (Vanilla Framework + nav)
+│   └── roadmap.html             # Main roadmap page template
+├── tests/
+│   ├── conftest.py              # Fixtures (test DB setup/teardown)
+│   ├── test_api.py              # Endpoint + HTML page tests
+│   ├── test_color_logic.py      # Color derivation unit tests
+│   ├── test_jira_sync.py        # Sync pipeline integration tests
+│   └── test_snapshots.py        # Snapshot + diff tests
+├── charm/                       # Juju charm for deployment
+├── constitution.md              # AI coding guidelines
+└── memory.md                    # Architectural state across sessions
 ```
 
 ## Architecture decisions
