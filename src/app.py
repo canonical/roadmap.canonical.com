@@ -648,7 +648,7 @@ def _query_filter_options(department: str | None = None) -> dict:
 def _query_roadmap_items(
     department: str | None = None,
     product: str | None = None,
-    cycles: list[str] | None = None,
+    cycle: str | None = None,
 ) -> OrderedDict[str, OrderedDict[str, list[dict]]]:
     """Return roadmap items grouped by cycle → objective (parent).
 
@@ -702,11 +702,10 @@ def _query_roadmap_items(
             continue
 
         # Apply cycle filter
-        if cycles:
-            matching = [c for c in item_cycles if c in cycles]
-            if not matching:
+        if cycle:
+            if cycle not in item_cycles:
                 continue
-            item_cycles = matching
+            item_cycles = [cycle]
 
         # Group by objective (parent summary) instead of product
         parent_key = item.get("parent_key")
@@ -743,7 +742,7 @@ def roadmap_page(
     request: Request,
     department: str | None = Query(None),
     product: str | None = Query(None),
-    cycle: list[str] | None = Query(None),
+    cycle: str | None = Query(None),
 ):
     """Render the main roadmap page with server-side Jinja2 templates."""
     options = _query_filter_options(department=department)
@@ -753,12 +752,7 @@ def roadmap_page(
     if not product or product not in available_products:
         product = available_products[0] if available_products else None
 
-    # Normalise cycle list: drop empty strings, None → []
-    selected_cycles = [c for c in (cycle or []) if c]
-
-    grouped_items, objective_urls = _query_roadmap_items(
-        department=department, product=product, cycles=selected_cycles,
-    )
+    grouped_items, objective_urls = _query_roadmap_items(department=department, product=product, cycle=cycle)
 
     return templates.TemplateResponse(
         request,
@@ -770,7 +764,7 @@ def roadmap_page(
             "dept_products_json": json.dumps(options["dept_products"]),
             "selected_department": department or "",
             "selected_product": product or "",
-            "selected_cycles": selected_cycles,
+            "selected_cycle": cycle or "",
             "grouped_items": grouped_items,
             "objective_urls": objective_urls,
         },
