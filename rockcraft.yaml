@@ -1,0 +1,19 @@
+# See https://documentation.ubuntu.com/rockcraft/1.17.0/reference/extensions/fastapi-framework
+# For questions or help, visit https://matrix.to/#/#12-factor-charms:ubuntu.com
+
+name: roadmap-web-rock
+base: ubuntu@24.04
+version: '0.1'
+summary: FastAPI image for web service of roadmap.canonical.com
+description: |
+    Read more about the project on https://github.com/canonical/roadmap.canonical.com
+
+platforms:
+    amd64:
+    # arm64:
+    # ppc64el:
+    # s390x:
+
+
+extensions:
+- fastapi-framework
