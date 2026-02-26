@@ -45,4 +45,27 @@ config:
         The JQL filter used to query Jira issues.
       default: "issuetype = Epic"
       type: string
+    oidc-client-id:
+      description: |
+        The OIDC client ID for authenticating users.
+        Leave empty to disable authentication.
+      type: string
+    oidc-client-secret:
+      description: |
+        The OIDC client secret.
+      type: string
+    oidc-issuer:
+      description: |
+        The OIDC issuer URL. Used for OpenID Connect discovery.
+      default: "https://iam.green.canonical.com"
+      type: string
+    oidc-redirect-uri:
+      description: |
+        The full callback URL for the OIDC redirect (e.g. https://roadmap.canonical.com/callback).
+      type: string
+    session-secret:
+      description: |
+        Secret key used to sign the session cookie.
+        Must be set to a stable random value for multi-replica deployments.
+      type: string
 

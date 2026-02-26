@@ -17,3 +17,6 @@ build/
 # IDE
 .vscode/
 .idea/
+
+*.rock
+*.charm
