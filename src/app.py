@@ -186,6 +186,34 @@ async def callback(request: Request):
     return await handle_callback(request)
 
 
+@app.get("/token", response_class=HTMLResponse)
+async def token_page(request: Request):
+    """Show the session cookie as a ready-to-copy curl command."""
+    cookie_value = request.cookies.get("roadmap_session", "")
+    base_url = str(request.base_url).rstrip("/")
+    return HTMLResponse(f"""<!DOCTYPE html>
+<html><head>
+<title>API Token</title>
+<link rel="stylesheet" href="https://assets.ubuntu.com/v1/vanilla-framework-version-4.21.0.min.css"/>
+</head><body>
+<div class="p-strip"><div class="row"><div class="col-12">
+<h1>API session cookie</h1>
+<p>You are authenticated. Use the cookie below to call API endpoints with <code>curl</code>:</p>
+<pre class="p-code-snippet"><code>curl -b 'roadmap_session={cookie_value}' {base_url}/api/v1/status</code></pre>
+<p>This cookie expires in 24 hours (or when the server restarts).</p>
+<h2>Examples</h2>
+<pre class="p-code-snippet"><code># Trigger a Jira sync
+curl -X POST -b 'roadmap_session={cookie_value}' {base_url}/api/v1/sync
+
+# Get roadmap items
+curl -b 'roadmap_session={cookie_value}' {base_url}/api/v1/items
+
+# Get sync status
+curl -b 'roadmap_session={cookie_value}' {base_url}/api/v1/status</code></pre>
+</div></div></div>
+</body></html>""")
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
