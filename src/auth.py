@@ -33,7 +33,10 @@ def configure_oauth() -> None:
         client_id=settings.oidc_client_id,
         client_secret=settings.oidc_client_secret,
         server_metadata_url=f"{settings.oidc_issuer.rstrip('/')}/.well-known/openid-configuration",
-        client_kwargs={"scope": "openid email profile"},
+        client_kwargs={
+            "scope": "openid email profile",
+            "token_endpoint_auth_method": "client_secret_post",
+        },
     )
 
 
@@ -58,7 +61,12 @@ async def login_redirect(request: Request) -> RedirectResponse:
 
 async def handle_callback(request: Request) -> RedirectResponse:
     """Exchange the authorization code for tokens, store user info in session."""
-    token = await oauth.oidc.authorize_access_token(request)
+    logger.debug("OIDC callback query params: %s", dict(request.query_params))
+    try:
+        token = await oauth.oidc.authorize_access_token(request)
+    except Exception:
+        logger.exception("OIDC token exchange failed")
+        raise
 
     # Prefer the id_token claims; fall back to userinfo endpoint.
     userinfo = token.get("userinfo")
