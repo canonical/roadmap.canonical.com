@@ -29,7 +29,6 @@
     <div class="p-form__group">
       <label for="cycle">Cycle</label>
       <select name="cycle" id="cycle" class="p-form-validation__input">
-        <option value="">All cycles</option>
         {% for c in cycles %}
           <option value="{{ c }}" {{ 'selected' if c == selected_cycle }}>{{ c }}</option>
         {% endfor %}
