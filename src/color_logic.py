@@ -34,7 +34,10 @@ def calculate_epic_color(issue_fields: dict[str, Any]) -> dict[str, Any]:
 
     # roadmap_state is a custom field — adjust the ID to match your Jira instance
     roadmap_state_field = issue_fields.get("customfield_10968")
-    state: str | None = roadmap_state_field.get("value") if isinstance(roadmap_state_field, dict) else None
+    raw_state: str | None = roadmap_state_field.get("value") if isinstance(roadmap_state_field, dict) else None
+    # Strip leading/trailing whitespace and emoji characters (Jira values may
+    # contain decorative emoji like 🟧, 🟥, 🟦, ⬛).
+    state = re.sub(r"[^\w\s]", "", raw_state).strip() if raw_state else None
 
     # --- carry-over ----------------------------------------------------------
     cycle_labels = [lbl for lbl in labels if CYCLE_RE.match(lbl)]
