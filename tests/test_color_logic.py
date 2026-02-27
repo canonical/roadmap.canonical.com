@@ -97,3 +97,47 @@ def test_done_with_carry_over():
     result = calculate_epic_color(fields)
     assert result["health"] == {"color": "green", "label": "C"}
     assert result["carry_over"] == {"color": "purple", "count": 2}
+
+
+def test_emoji_at_risk_state():
+    """Emoji-prefixed '🟧 At Risk' should be treated as 'At Risk'."""
+    fields = {
+        "status": {"name": "In Progress"},
+        "customfield_10968": {"value": "🟧 At Risk"},
+        "labels": [],
+    }
+    result = calculate_epic_color(fields)
+    assert result["health"]["color"] == "orange"
+
+
+def test_emoji_excluded_state():
+    """Emoji-prefixed '🟥 Excluded' should be treated as 'Excluded'."""
+    fields = {
+        "status": {"name": "Open"},
+        "customfield_10968": {"value": "🟥 Excluded"},
+        "labels": [],
+    }
+    result = calculate_epic_color(fields)
+    assert result["health"]["color"] == "red"
+
+
+def test_emoji_added_state():
+    """Emoji-prefixed '🟦 Added' should be treated as 'Added'."""
+    fields = {
+        "status": {"name": "Open"},
+        "customfield_10968": {"value": "🟦 Added"},
+        "labels": [],
+    }
+    result = calculate_epic_color(fields)
+    assert result["health"]["color"] == "blue"
+
+
+def test_emoji_dropped_state():
+    """Emoji-prefixed '⬛ Dropped' should be treated as 'Dropped'."""
+    fields = {
+        "status": {"name": "Open"},
+        "customfield_10968": {"value": "⬛ Dropped"},
+        "labels": [],
+    }
+    result = calculate_epic_color(fields)
+    assert result["health"]["color"] == "black"
