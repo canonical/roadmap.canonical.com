@@ -5,6 +5,7 @@ Two-phase approach:
   2. ``process_raw_jira_data`` — read unprocessed rows, derive roadmap fields, upsert into ``roadmap_item``.
   3. ``take_daily_snapshot``  — once per day, snapshot all ``roadmap_item`` rows for change-tracking.
   4. ``freeze_cycle`` / ``unfreeze_cycle`` — lock a cycle's data for historical preservation.
+  5. ``cycle_config`` CRUD    — manage cycle lifecycle states (frozen / current / future).
 """
 
 from __future__ import annotations
@@ -513,3 +514,231 @@ def get_frozen_cycles() -> dict[str, dict]:
             }
             for row in cur.fetchall()
         }
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 — cycle_config: explicit lifecycle state management
+# ---------------------------------------------------------------------------
+
+
+def get_cycle_configs() -> dict[str, dict]:
+    """Return all registered cycles with their state and metadata.
+
+    Returns:
+        ``{"25.10": {"state": "frozen", "updated_at": "...", "updated_by": "..."}, ...}``
+    """
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT cycle, state, updated_at, updated_by "
+            "FROM cycle_config ORDER BY cycle DESC"
+        )
+        return {
+            row[0]: {
+                "state": row[1],
+                "updated_at": row[2].isoformat() if row[2] else None,
+                "updated_by": row[3],
+            }
+            for row in cur.fetchall()
+        }
+
+
+def register_cycle(cycle: str, state: str, updated_by: str | None = None) -> dict:
+    """Register a new cycle with an initial state.
+
+    Args:
+        cycle: The cycle label (e.g. ``"26.10"``). Must match XX.XX format.
+        state: Initial state — ``"frozen"``, ``"current"``, or ``"future"``.
+        updated_by: Optional email of the person registering the cycle.
+
+    Returns:
+        The newly created cycle config dict.
+
+    Raises:
+        ValueError: If the cycle label is invalid or state is unrecognised.
+        RuntimeError: If the cycle is already registered, or if setting
+            ``"current"`` would violate the at-most-one-current constraint.
+    """
+    if not CYCLE_RE.match(cycle):
+        raise ValueError(f"Invalid cycle label: {cycle!r} (expected XX.XX format)")
+    if state not in ("frozen", "current", "future"):
+        raise ValueError(f"Invalid state: {state!r} (expected frozen/current/future)")
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            # Already registered?
+            cur.execute("SELECT 1 FROM cycle_config WHERE cycle = %s", (cycle,))
+            if cur.fetchone():
+                raise RuntimeError(f"Cycle {cycle} is already registered")
+
+            # At most one current
+            if state == "current":
+                cur.execute("SELECT cycle FROM cycle_config WHERE state = 'current'")
+                existing = cur.fetchone()
+                if existing:
+                    raise RuntimeError(
+                        f"Cannot register {cycle} as current — "
+                        f"cycle {existing[0]} is already current"
+                    )
+
+            cur.execute(
+                "INSERT INTO cycle_config (cycle, state, updated_by) VALUES (%s, %s, %s)",
+                (cycle, state, updated_by),
+            )
+
+            # Side effect: if registering as frozen, create the freeze snapshot
+            if state == "frozen":
+                _ensure_freeze_snapshot(cur, cycle, updated_by)
+
+        conn.commit()
+
+    logger.info("Cycle %s registered with state=%s", cycle, state)
+    return {"cycle": cycle, "state": state, "updated_by": updated_by}
+
+
+def set_cycle_state(cycle: str, new_state: str, updated_by: str | None = None) -> dict:
+    """Change a registered cycle's state, with freeze/unfreeze side effects.
+
+    State transitions and side effects:
+        - **→ frozen**: creates a ``cycle_freeze`` snapshot if one doesn't already exist.
+        - **frozen →** (any other state): deletes the ``cycle_freeze`` snapshot.
+        - **→ current**: enforced that at most one cycle is current.
+        - **→ future**: no special side effects.
+
+    Args:
+        cycle: The cycle label (must already be registered).
+        new_state: Target state (``"frozen"`` / ``"current"`` / ``"future"``).
+        updated_by: Optional email of the person changing state.
+
+    Returns:
+        Updated cycle config dict.
+
+    Raises:
+        ValueError: If the cycle is not registered or new_state is invalid.
+        RuntimeError: If setting ``"current"`` would violate the at-most-one constraint.
+    """
+    if new_state not in ("frozen", "current", "future"):
+        raise ValueError(f"Invalid state: {new_state!r} (expected frozen/current/future)")
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT state FROM cycle_config WHERE cycle = %s", (cycle,))
+            row = cur.fetchone()
+            if not row:
+                raise ValueError(f"Cycle {cycle} is not registered")
+            old_state = row[0]
+
+            if old_state == new_state:
+                # No-op
+                return {"cycle": cycle, "state": new_state, "updated_by": updated_by}
+
+            # At most one current
+            if new_state == "current":
+                cur.execute(
+                    "SELECT cycle FROM cycle_config WHERE state = 'current' AND cycle != %s",
+                    (cycle,),
+                )
+                existing = cur.fetchone()
+                if existing:
+                    raise RuntimeError(
+                        f"Cannot set {cycle} to current — "
+                        f"cycle {existing[0]} is already current"
+                    )
+
+            # Side effects: leaving frozen → delete snapshot
+            if old_state == "frozen":
+                _delete_freeze_snapshot(cur, cycle)
+
+            # Side effects: entering frozen → create snapshot
+            if new_state == "frozen":
+                _ensure_freeze_snapshot(cur, cycle, updated_by)
+
+            cur.execute(
+                "UPDATE cycle_config SET state = %s, updated_at = now(), updated_by = %s "
+                "WHERE cycle = %s",
+                (new_state, updated_by, cycle),
+            )
+        conn.commit()
+
+    logger.info("Cycle %s state changed: %s → %s", cycle, old_state, new_state)
+    return {"cycle": cycle, "state": new_state, "updated_by": updated_by}
+
+
+def remove_cycle(cycle: str) -> None:
+    """Remove a cycle from the config registry.
+
+    If the cycle is frozen, the freeze snapshot is also deleted.
+
+    Raises:
+        ValueError: If the cycle is not registered.
+    """
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT state FROM cycle_config WHERE cycle = %s", (cycle,))
+            row = cur.fetchone()
+            if not row:
+                raise ValueError(f"Cycle {cycle} is not registered")
+
+            # Clean up freeze data if frozen
+            if row[0] == "frozen":
+                _delete_freeze_snapshot(cur, cycle)
+
+            cur.execute("DELETE FROM cycle_config WHERE cycle = %s", (cycle,))
+        conn.commit()
+
+    logger.info("Cycle %s removed from config", cycle)
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers for freeze side effects
+# ---------------------------------------------------------------------------
+
+
+def _ensure_freeze_snapshot(cur, cycle: str, frozen_by: str | None = None) -> int:
+    """Create a ``cycle_freeze`` + ``cycle_freeze_item`` snapshot if it doesn't exist.
+
+    Returns the number of items captured.
+    """
+    cur.execute("SELECT 1 FROM cycle_freeze WHERE cycle = %s", (cycle,))
+    if cur.fetchone():
+        return 0  # already exists
+
+    cur.execute(
+        "INSERT INTO cycle_freeze (cycle, frozen_by) VALUES (%s, %s)",
+        (cycle, frozen_by),
+    )
+    cur.execute(
+        """
+        INSERT INTO cycle_freeze_item
+            (cycle, jira_key, title, status, color_status, url,
+             product_id, product_name, department,
+             parent_key, parent_summary, rank, parent_rank, tags)
+        SELECT
+            %s,
+            r.jira_key,
+            r.title,
+            r.status,
+            r.color_status,
+            r.url,
+            r.product_id,
+            p.name,
+            p.department,
+            r.parent_key,
+            r.parent_summary,
+            r.rank,
+            r.parent_rank,
+            r.tags
+        FROM roadmap_item r
+        LEFT JOIN product p ON p.id = r.product_id
+        WHERE %s = ANY(r.tags)
+        """,
+        (cycle, cycle),
+    )
+    count = cur.rowcount
+    logger.info("Freeze snapshot for cycle %s — %d items captured", cycle, count)
+    return count
+
+
+def _delete_freeze_snapshot(cur, cycle: str) -> None:
+    """Delete the ``cycle_freeze`` + ``cycle_freeze_item`` rows for a cycle."""
+    cur.execute("DELETE FROM cycle_freeze WHERE cycle = %s", (cycle,))
+    # Items are cascade-deleted via FK

@@ -132,6 +132,17 @@ CREATE TABLE IF NOT EXISTS cycle_freeze_item (
 
 CREATE INDEX IF NOT EXISTS idx_cycle_freeze_item_cycle ON cycle_freeze_item(cycle);
 
+-- Cycle configuration — explicit lifecycle state for each planning cycle.
+-- States: 'frozen' (immutable snapshot), 'current' (live Jira sync), 'future' (all items Inactive).
+-- At most ONE cycle may be in 'current' state at any time (zero is allowed during transitions).
+CREATE TABLE IF NOT EXISTS cycle_config (
+    cycle       VARCHAR(16)  PRIMARY KEY,              -- e.g. '25.10'
+    state       VARCHAR(16)  NOT NULL
+                CHECK (state IN ('frozen', 'current', 'future')),
+    updated_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_by  VARCHAR(256)                           -- email of last person who changed state
+);
+
 -- Seed a catch-all product so FK never fails
 INSERT INTO product (name, department)
 VALUES ('Uncategorized', 'Unassigned')

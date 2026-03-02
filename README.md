@@ -29,9 +29,8 @@ cp .env.example .env
 ### 3. Install dependencies & run the API
 
 ```bash
-cd backend
 pip install -e ".[dev]"
-uvicorn src.api:app --reload --port 8000
+uvicorn src.app:app --reload --port 8000
 ```
 
 The app is now at **http://localhost:8000**. Schema is applied automatically on startup.
@@ -189,6 +188,57 @@ pytest -v
 | `DELETE` | `/api/v1/products/{id}` | Delete a product (unlinks roadmap items) |
 | `GET` | `/api/v1/snapshots` | List all available snapshot dates with item counts |
 | `GET` | `/api/v1/snapshots/diff` | Compare two snapshots (`?from_date=&to_date=`, YYYY-MM-DD) |
+| `GET` | `/api/v1/cycles` | List all cycles with state (frozen/current/future) |
+| `POST` | `/api/v1/cycles/{cycle}` | Register a new cycle with initial state |
+| `PUT` | `/api/v1/cycles/{cycle}` | Change a cycle's state (with freeze/unfreeze side effects) |
+| `DELETE` | `/api/v1/cycles/{cycle}` | Remove a cycle from the registry |
+| `GET` | `/api/v1/cycles/{cycle}/items` | Get frozen items for a specific cycle |
+
+## Cycle lifecycle management
+
+Work is planned in 6-month cycles (e.g. `25.10`, `26.04`). Each cycle has an explicit lifecycle state managed via the `cycle_config` table:
+
+| State | Meaning | Carry-over? | Data source |
+|-------|---------|-------------|-------------|
+| **future** | Planned but not yet started. All items shown as **Inactive** (white). | No | Live Jira (colors overridden) |
+| **current** | The active cycle. Items show live Jira health colors. | Yes (counts frozen cycles) | Live Jira |
+| **frozen** | Closed cycle. Data is immutable — a snapshot taken at freeze time. | Counted by other cycles | `cycle_freeze_item` snapshot |
+
+### State machine
+
+```
+  ┌──────────┐     ┌──────────┐     ┌──────────┐
+  │  future  │ ──▶ │ current  │ ──▶ │  frozen  │
+  └──────────┘     └──────────┘     └──────────┘
+       │                │                │
+       └────────────────┴────────────────┘
+         (any transition is allowed)
+```
+
+**Constraints:**
+- At most **one** cycle can be `current` at any time (zero is OK during transitions).
+- Transitioning **to** `frozen` creates a `cycle_freeze` snapshot automatically.
+- Transitioning **away from** `frozen` deletes the snapshot.
+
+### Typical lifecycle
+
+```
+# Upcoming cycle — all items show as Inactive
+curl -X POST localhost:8000/api/v1/cycles/27.04 -H 'Content-Type: application/json' -d '{"state": "future"}'
+
+# Cycle starts — items show live Jira colors
+curl -X PUT localhost:8000/api/v1/cycles/27.04 -H 'Content-Type: application/json' -d '{"state": "current"}'
+
+# Cycle ends — snapshot taken, data becomes immutable
+curl -X PUT localhost:8000/api/v1/cycles/27.04 -H 'Content-Type: application/json' -d '{"state": "frozen"}'
+```
+
+### Carry-over logic
+
+An item appearing in multiple cycles (e.g. `25.10`, `26.04`) shows a purple carry-over badge. The carry-over count equals the number of **frozen** cycle labels on that item. This means:
+- Items in the current cycle that also appeared in a frozen past cycle show carry-over.
+- Items spanning two future cycles show no carry-over (neither cycle is frozen).
+- Items in a frozen cycle show carry-over for *other* frozen cycles they belong to.
 
 ## Daily snapshots & change reports
 

@@ -12,7 +12,10 @@ from typing import Any
 CYCLE_RE = re.compile(r"^\d{2}\.\d{2}$")
 
 
-def calculate_epic_color(issue_fields: dict[str, Any]) -> dict[str, Any]:
+def calculate_epic_color(
+    issue_fields: dict[str, Any],
+    frozen_cycles: set[str] | None = None,
+) -> dict[str, Any]:
     """Derive color_status from raw Jira issue fields.
 
     Returns a dict like:
@@ -20,6 +23,14 @@ def calculate_epic_color(issue_fields: dict[str, Any]) -> dict[str, Any]:
             "health": {"color": "green", "label": "C"},  # label is optional
             "carry_over": {"color": "purple", "count": 1} | None,
         }
+
+    Args:
+        issue_fields: Raw Jira issue ``fields`` dict.
+        frozen_cycles: Optional set of frozen cycle labels.  When provided,
+            carry-over counts only the frozen cycle labels on the item
+            (i.e. only past/closed cycles count towards carry-over).
+            When ``None`` (the default — used during sync), carry-over
+            counts all XX.XX cycle labels (backwards-compatible).
 
     Rules:
         - Multiple *cycle* labels (XX.XX pattern) → carry-over (purple badge).
@@ -42,8 +53,15 @@ def calculate_epic_color(issue_fields: dict[str, Any]) -> dict[str, Any]:
     # --- carry-over ----------------------------------------------------------
     cycle_labels = [lbl for lbl in labels if CYCLE_RE.match(lbl)]
     carry_over = None
-    if len(cycle_labels) > 1:
-        carry_over = {"color": "purple", "count": len(cycle_labels) - 1}
+    if frozen_cycles is not None:
+        # Only count frozen (past) cycle labels as carry-over
+        frozen_count = sum(1 for lbl in cycle_labels if lbl in frozen_cycles)
+        if frozen_count > 0:
+            carry_over = {"color": "purple", "count": frozen_count}
+    else:
+        # Legacy behaviour: count all cycle labels (used during sync pipeline)
+        if len(cycle_labels) > 1:
+            carry_over = {"color": "purple", "count": len(cycle_labels) - 1}
 
     # --- health color --------------------------------------------------------
     state_color_map = {
