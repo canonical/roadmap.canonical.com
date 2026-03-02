@@ -3,6 +3,8 @@
 import json
 from datetime import date
 
+from psycopg.types.json import Jsonb
+
 from src.database import get_db_connection
 from src.jira_sync import take_daily_snapshot
 
@@ -18,7 +20,7 @@ def _insert_roadmap_item(jira_key: str, title: str, status: str, color: str,
                           parent_key: str | None = None, parent_summary: str | None = None,
                           release: str | None = None) -> None:
     """Insert a roadmap_item row for testing."""
-    color_status = json.dumps({"health": {"color": color}, "carry_over": None})
+    color_status = Jsonb({"health": {"color": color}, "carry_over": None})
     if product_id is None:
         product_id = _get_uncategorized_id()
     with get_db_connection() as conn, conn.cursor() as cur:

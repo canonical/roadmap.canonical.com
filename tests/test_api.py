@@ -2,6 +2,8 @@
 
 import json
 
+from psycopg.types.json import Jsonb
+
 from src.database import get_db_connection
 
 
@@ -35,7 +37,7 @@ def test_roadmap_with_data(client):
                     ('TEST-1', 'Test Epic', 'A description', 'In Progress', '25.10',
                      ARRAY['roadmap'], %s, %s, 'http://jira/TEST-1')
                 """,
-                (uncat_id, json.dumps(color)),
+                (uncat_id, Jsonb(color)),
             )
         conn.commit()
 
@@ -216,7 +218,7 @@ def test_roadmap_page_empty(client):
 
 def test_roadmap_page_with_data(client):
     """Items with cycle labels appear in the rendered HTML grouped by cycle then objective."""
-    color = json.dumps({"health": {"color": "green"}, "carry_over": None})
+    color = Jsonb({"health": {"color": "green"}, "carry_over": None})
     uncat_id = _get_uncategorized_id()
     with get_db_connection() as conn:
         with conn.cursor() as cur:
@@ -242,7 +244,7 @@ def test_roadmap_page_with_data(client):
 
 def test_roadmap_page_with_parent(client):
     """Items with a parent show up grouped by objective (parent summary only)."""
-    color = json.dumps({"health": {"color": "green"}, "carry_over": None})
+    color = Jsonb({"health": {"color": "green"}, "carry_over": None})
     uncat_id = _get_uncategorized_id()
     with get_db_connection() as conn:
         with conn.cursor() as cur:
@@ -270,7 +272,7 @@ def test_roadmap_page_with_parent(client):
 
 def test_roadmap_page_hides_items_without_cycle(client):
     """Items that have no XX.XX cycle label are not shown."""
-    color = json.dumps({"health": {"color": "white"}, "carry_over": None})
+    color = Jsonb({"health": {"color": "white"}, "carry_over": None})
     uncat_id = _get_uncategorized_id()
     with get_db_connection() as conn:
         with conn.cursor() as cur:
@@ -292,7 +294,7 @@ def test_roadmap_page_hides_items_without_cycle(client):
 
 def test_roadmap_page_item_in_multiple_cycles(client):
     """An item with two cycle labels appears under both cycle headings."""
-    color = json.dumps({"health": {"color": "green"}, "carry_over": {"color": "purple", "count": 1}})
+    color = Jsonb({"health": {"color": "green"}, "carry_over": {"color": "purple", "count": 1}})
     uncat_id = _get_uncategorized_id()
     with get_db_connection() as conn:
         with conn.cursor() as cur:
@@ -318,7 +320,7 @@ def test_roadmap_page_item_in_multiple_cycles(client):
 
 def test_roadmap_page_filter_by_cycle(client):
     """Cycle filter shows only the selected cycle's items."""
-    color = json.dumps({"health": {"color": "green"}, "carry_over": None})
+    color = Jsonb({"health": {"color": "green"}, "carry_over": None})
     uncat_id = _get_uncategorized_id()
     with get_db_connection() as conn:
         with conn.cursor() as cur:
@@ -343,7 +345,7 @@ def test_roadmap_page_filter_by_cycle(client):
 
 def test_roadmap_page_filter_by_product(client):
     """Filtering by product shows only matching items."""
-    color = json.dumps({"health": {"color": "green"}, "carry_over": None})
+    color = Jsonb({"health": {"color": "green"}, "carry_over": None})
     uncat_id = _get_uncategorized_id()
     with get_db_connection() as conn:
         with conn.cursor() as cur:

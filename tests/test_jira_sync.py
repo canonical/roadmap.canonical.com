@@ -3,6 +3,7 @@
 import json
 
 import pytest
+from psycopg.types.json import Jsonb
 
 from src.database import get_db_connection
 from src.jira_sync import JiraSourceRule, _build_jql, _match_issue_to_product, process_raw_jira_data
@@ -15,7 +16,7 @@ def _insert_raw_issue(jira_key: str, fields: dict) -> None:
         with conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO jira_issue_raw (jira_key, raw_data) VALUES (%s, %s)",
-                (jira_key, json.dumps(raw)),
+                (jira_key, Jsonb(raw)),
             )
         conn.commit()
 
@@ -134,7 +135,7 @@ def test_process_upserts_on_re_fetch():
     # Simulate a re-fetch by resetting processed_at and updating data
     with get_db_connection() as conn:
         with conn.cursor() as cur:
-            new_raw = json.dumps({"fields": {"summary": "v2", "status": {"name": "Done"}, "labels": []}})
+            new_raw = Jsonb({"fields": {"summary": "v2", "status": {"name": "Done"}, "labels": []}})
             cur.execute(
                 "UPDATE jira_issue_raw SET raw_data = %s, processed_at = NULL WHERE jira_key = 'MOCK-4'",
                 (new_raw,),

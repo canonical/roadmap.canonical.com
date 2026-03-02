@@ -44,6 +44,8 @@ def _setup_test_database():
                 " roadmap_snapshot, roadmap_item,"
                 " product_jira_source, jira_issue_raw, product CASCADE"
             )
+        conn.commit()
+        with conn.cursor() as cur:
             cur.execute(schema_sql)
         conn.commit()
 
