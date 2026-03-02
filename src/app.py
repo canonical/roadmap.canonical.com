@@ -21,7 +21,15 @@ from starlette.responses import JSONResponse, RedirectResponse
 
 from .auth import configure_oauth, handle_callback, is_authenticated, login_redirect
 from .database import get_db_connection
-from .jira_sync import _build_jql, process_raw_jira_data, sync_jira_data, take_daily_snapshot
+from .jira_sync import (
+    _build_jql,
+    freeze_cycle,
+    get_frozen_cycles,
+    process_raw_jira_data,
+    sync_jira_data,
+    take_daily_snapshot,
+    unfreeze_cycle,
+)
 from .settings import settings
 
 logger = logging.getLogger(__name__)
@@ -378,6 +386,103 @@ def snapshot_diff(
     }
 
 
+# ---------------------------------------------------------------------------
+# Cycle freeze endpoints — preserve historical cycle state
+# ---------------------------------------------------------------------------
+
+
+class CycleFreezeIn(BaseModel):
+    """Input schema for freezing a cycle."""
+
+    note: str | None = None
+
+
+@app.get("/api/v1/cycles")
+def list_cycles():
+    """List all known cycles with their freeze status."""
+    frozen = get_frozen_cycles()
+
+    # Also gather live cycles from roadmap_item tags
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT DISTINCT unnest(tags) AS tag FROM roadmap_item")
+        all_tags = [r[0] for r in cur.fetchall()]
+
+    live_cycles = sorted(
+        [t for t in all_tags if CYCLE_RE.match(t)],
+        reverse=True,
+    )
+
+    # Frozen cycles that have no live items should still appear
+    all_cycle_labels = sorted(
+        set(live_cycles) | set(frozen.keys()),
+        reverse=True,
+    )
+
+    data = []
+    for c in all_cycle_labels:
+        entry = {"cycle": c, "frozen": c in frozen}
+        if c in frozen:
+            entry.update(frozen[c])
+        data.append(entry)
+
+    return {"data": data, "meta": {"total": len(data)}}
+
+
+@app.post("/api/v1/cycles/{cycle}/freeze", status_code=201)
+def freeze_cycle_endpoint(cycle: str, body: CycleFreezeIn | None = None, request: Request = None):
+    """Freeze a cycle — snapshot its current roadmap items as immutable historical data."""
+    frozen_by = None
+    if request and request.session.get("user"):
+        frozen_by = request.session["user"].get("email")
+
+    note = body.note if body else None
+
+    try:
+        count = freeze_cycle(cycle, frozen_by=frozen_by, note=note)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return {"message": f"Cycle {cycle} frozen", "items_captured": count}
+
+
+@app.delete("/api/v1/cycles/{cycle}/freeze", status_code=200)
+def unfreeze_cycle_endpoint(cycle: str):
+    """Unfreeze a cycle — remove frozen data and restore live Jira view."""
+    try:
+        unfreeze_cycle(cycle)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return {"message": f"Cycle {cycle} unfrozen — live data restored"}
+
+
+@app.get("/api/v1/cycles/{cycle}/items")
+def get_frozen_cycle_items(cycle: str):
+    """Return the frozen items for a specific cycle."""
+    frozen = get_frozen_cycles()
+    if cycle not in frozen:
+        raise HTTPException(status_code=404, detail=f"Cycle {cycle} is not frozen")
+
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT jira_key, title, status, color_status, url, "
+            "       product_name, department, parent_key, parent_summary, "
+            "       rank, parent_rank, tags "
+            "FROM cycle_freeze_item WHERE cycle = %s "
+            "ORDER BY parent_rank NULLS LAST, rank NULLS LAST, title",
+            (cycle,),
+        )
+        columns = [desc[0] for desc in cur.description]
+        rows = cur.fetchall()
+
+    return {
+        "data": [dict(zip(columns, row, strict=False)) for row in rows],
+        "meta": {"total": len(rows), "cycle": cycle, **frozen[cycle]},
+    }
+
+
 @app.get("/api/v1/roadmap")
 def get_roadmap(
     product: str | None = Query(None),
@@ -635,21 +740,64 @@ def _query_filter_options(department: str | None = None) -> dict:
 
         # Cycles come from the tags array (labels) on roadmap_item.
         # unnest expands the array; we then filter for XX.XX pattern in Python.
+        # Also include cycles that exist only as frozen records.
         cur.execute("SELECT DISTINCT unnest(tags) AS tag FROM roadmap_item")
         all_tags = [r[0] for r in cur.fetchall()]
-        cycles = sorted(
-            [t for t in all_tags if CYCLE_RE.match(t)],
-            reverse=True,
-        )
+        live_cycles = {t for t in all_tags if CYCLE_RE.match(t)}
+
+        cur.execute("SELECT cycle FROM cycle_freeze")
+        frozen_cycles = {r[0] for r in cur.fetchall()}
+
+        cycles = sorted(live_cycles | frozen_cycles, reverse=True)
 
     return {"departments": departments, "products": products, "cycles": cycles, "dept_products": dept_products}
+
+
+def _query_frozen_items_for_cycle(
+    frozen_cycle: str,
+    department: str | None = None,
+    product: str | None = None,
+) -> list[dict]:
+    """Query ``cycle_freeze_item`` for a single frozen cycle, applying product/dept filters."""
+    clauses: list[str] = ["f.cycle = %s"]
+    params: list = [frozen_cycle]
+
+    if department:
+        clauses.append("f.department = %s")
+        params.append(department)
+    if product:
+        clauses.append("f.product_name = %s")
+        params.append(product)
+
+    where = " WHERE " + " AND ".join(clauses)
+    query = (
+        "SELECT f.jira_key, f.title, f.product_name AS product, "
+        "       f.color_status, f.url, f.tags, "
+        "       f.parent_key, f.parent_summary, f.rank, f.parent_rank "
+        f"FROM cycle_freeze_item f{where} "
+        "ORDER BY f.parent_rank NULLS LAST, f.rank NULLS LAST, f.title"
+    )
+
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute(query, params)
+        columns = [desc[0] for desc in cur.description]
+        rows = cur.fetchall()
+
+    items = []
+    for row in rows:
+        item = dict(zip(columns, row, strict=False))
+        cs = item.get("color_status")
+        if isinstance(cs, str):
+            item["color_status"] = json.loads(cs)
+        items.append(item)
+    return items
 
 
 def _query_roadmap_items(
     department: str | None = None,
     product: str | None = None,
     cycle: str | None = None,
-) -> OrderedDict[str, OrderedDict[str, list[dict]]]:
+) -> tuple[OrderedDict[str, OrderedDict[str, list[dict]]], dict[str, str], set[str]]:
     """Return roadmap items grouped by cycle → objective (parent).
 
     Structure: ``{cycle: {objective_label: [items]}}``
@@ -658,7 +806,14 @@ def _query_roadmap_items(
     - Items with no parent are grouped under "No objective".
     - Items with no cycle labels are excluded.
     - An item with multiple cycle labels appears in each bucket.
+    - **Frozen cycles** are served from ``cycle_freeze_item`` instead of live data.
+
+    Returns:
+        A tuple of (grouped_items, objective_urls, frozen_cycle_labels).
     """
+    frozen_map = get_frozen_cycles()  # {cycle: {frozen_at, frozen_by, note}}
+
+    # ── Live items from roadmap_item ──
     clauses: list[str] = []
     params: list = []
 
@@ -687,6 +842,7 @@ def _query_roadmap_items(
     # Build cycle → objective → items mapping
     raw: dict[str, dict[str, list[dict]]] = {}
     objective_urls: dict[str, str] = {}  # objective_label → Jira URL
+    frozen_cycles_in_view: set[str] = set()
 
     for row in rows:
         item = dict(zip(columns, row, strict=False))
@@ -719,7 +875,35 @@ def _query_roadmap_items(
         item["_objective"] = objective_label
 
         for c in item_cycles:
+            # Skip frozen cycles here — they'll be populated from freeze data below
+            if c in frozen_map:
+                continue
             raw.setdefault(c, {}).setdefault(objective_label, []).append(item)
+
+    # ── Frozen cycle data ──
+    # Determine which frozen cycles to include
+    if cycle and cycle in frozen_map:
+        frozen_to_load = [cycle]
+    elif cycle:
+        frozen_to_load = []  # specific non-frozen cycle requested
+    else:
+        frozen_to_load = list(frozen_map.keys())  # all frozen cycles
+
+    for fc in frozen_to_load:
+        frozen_items = _query_frozen_items_for_cycle(fc, department=department, product=product)
+        frozen_cycles_in_view.add(fc)
+
+        for item in frozen_items:
+            parent_key = item.get("parent_key")
+            parent_summary = item.get("parent_summary")
+            if parent_key and parent_summary:
+                objective_label = parent_summary
+                objective_urls[objective_label] = f"{settings.jira_url}/browse/{parent_key}"
+            else:
+                objective_label = "No objective"
+
+            item["_objective"] = objective_label
+            raw.setdefault(fc, {}).setdefault(objective_label, []).append(item)
 
     # Sort: cycles newest-first, objectives by parent_rank ("No objective" last)
     grouped: OrderedDict[str, OrderedDict[str, list[dict]]] = OrderedDict()
@@ -734,7 +918,7 @@ def _query_roadmap_items(
         )
         grouped[c] = OrderedDict((k, objectives[k]) for k in sorted_keys)
 
-    return grouped, objective_urls
+    return grouped, objective_urls, frozen_cycles_in_view
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -752,7 +936,9 @@ def roadmap_page(
     if not product or product not in available_products:
         product = available_products[0] if available_products else None
 
-    grouped_items, objective_urls = _query_roadmap_items(department=department, product=product, cycle=cycle)
+    grouped_items, objective_urls, frozen_cycles = _query_roadmap_items(
+        department=department, product=product, cycle=cycle,
+    )
 
     return templates.TemplateResponse(
         request,
@@ -767,5 +953,6 @@ def roadmap_page(
             "selected_cycle": cycle or "",
             "grouped_items": grouped_items,
             "objective_urls": objective_urls,
+            "frozen_cycles": frozen_cycles,
         },
     )

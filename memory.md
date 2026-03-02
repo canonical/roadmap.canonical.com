@@ -302,3 +302,67 @@
 ### Dependencies added
 - `authlib>=1.3,<2` (explicit)
 - `itsdangerous` (transitive via Starlette — not pinned)
+
+---
+
+## 2026-03-02 — Cycle freeze: preserve historical roadmap state at cycle closure
+
+### What was built
+- **Cycle freeze system** — allows freezing a cycle's roadmap data at the end of a 6-month
+  planning period. Once frozen, the roadmap page serves the immutable snapshot instead of
+  live Jira data. Jira syncs continue to update live items, but frozen cycles are unaffected.
+- **New tables**: `cycle_freeze` (header with metadata) + `cycle_freeze_item` (per-item
+  frozen state, fully denormalized with product name, department, objective, color).
+- **New API endpoints**: freeze, unfreeze, list cycles, get frozen items.
+- **Modified query logic**: `_query_roadmap_items` checks for frozen cycles and serves
+  data from `cycle_freeze_item` instead of `roadmap_item` for frozen cycles.
+- **UI indicators**: frozen cycles show a 🔒 badge in the cycle dropdown and a
+  "Frozen" banner + note on the page.
+- **21 new tests** covering freeze/unfreeze logic, API endpoints, and roadmap page integration.
+
+### New API endpoints
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/cycles` | List all cycles with freeze status |
+| `POST` | `/api/v1/cycles/{cycle}/freeze` | Freeze a cycle (snapshot current items) |
+| `DELETE` | `/api/v1/cycles/{cycle}/freeze` | Unfreeze a cycle (restore live data) |
+| `GET` | `/api/v1/cycles/{cycle}/items` | Get frozen items for a specific cycle |
+
+### Key decisions
+1. **Cycle-level freeze over extending snapshots** — `roadmap_snapshot` is date-based and
+   captures all items regardless of cycle. A cycle freeze is semantically cleaner: it's
+   per-cycle, self-contained, and the page logic is a simple branch.
+2. **Denormalized freeze items** — product name, department, color_status, objective are all
+   copied into `cycle_freeze_item` so the frozen view is completely independent of live data.
+   Products can be renamed/deleted without affecting historical records.
+3. **CASCADE delete on unfreeze** — `cycle_freeze_item` rows are deleted when the
+   `cycle_freeze` header is deleted. This makes unfreeze a single operation.
+4. **Freeze is idempotent-safe** — attempting to freeze an already-frozen cycle returns
+   409 Conflict rather than silently overwriting.
+5. **Empty freezes allowed** — a cycle with no matching items still creates a freeze record
+   (signals intent; items may appear via re-sync before the actual closure).
+6. **Live data skips frozen cycles** — the main query loop now skips items for cycles that
+   are frozen, and a separate code path loads frozen items from `cycle_freeze_item`.
+
+### Files created
+- `tests/test_cycle_freeze.py` — 21 tests (unit + API + page integration)
+
+### Files modified
+- `src/db_schema.sql` — added `cycle_freeze` + `cycle_freeze_item` tables + indexes
+- `src/jira_sync.py` — added `freeze_cycle()`, `unfreeze_cycle()`, `get_frozen_cycles()`
+- `src/app.py` — added 4 cycle API endpoints, updated `_query_filter_options` (includes
+  frozen-only cycles), rewrote `_query_roadmap_items` (frozen vs live branch), added
+  `frozen_cycles` to template context
+- `templates/roadmap.html` — 🔒 badge on frozen cycles in dropdown, frozen banner + note
+  per cycle section
+- `tests/conftest.py` — added `cycle_freeze_item`, `cycle_freeze` to teardown DROP;
+  disabled OIDC for tests; fixed stale `src.api` → `src.app` import
+
+### Test status
+- **92/92 tests pass, 0 failures**
+
+### Workflow for end users
+1. Cycle `25.10` is active — everyone sees live Jira data.
+2. At cycle closure: `POST /api/v1/cycles/25.10/freeze` (with optional note).
+3. From this point: viewing `25.10` shows frozen data; `26.04` continues live.
+4. If corrections are needed: `DELETE /api/v1/cycles/25.10/freeze` + re-freeze.

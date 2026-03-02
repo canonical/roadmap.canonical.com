@@ -20,6 +20,9 @@ def _setup_test_database():
     os.environ.setdefault("JIRA_PAT", "mock")
     os.environ.setdefault("JQL_FILTER", "issuetype = Epic")
 
+    # Disable OIDC for tests — the .env may have real credentials
+    os.environ["OIDC_CLIENT_ID"] = ""
+
     # Test DB runs on port 5433 via docker-compose db-test service
     db_host = os.environ.get("DB_TEST_HOST", "localhost")
     db_port = os.environ.get("DB_TEST_PORT", "5433")
@@ -37,7 +40,8 @@ def _setup_test_database():
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "DROP TABLE IF EXISTS roadmap_snapshot, roadmap_item,"
+                "DROP TABLE IF EXISTS cycle_freeze_item, cycle_freeze,"
+                " roadmap_snapshot, roadmap_item,"
                 " product_jira_source, jira_issue_raw, product CASCADE"
             )
             cur.execute(schema_sql)
@@ -48,7 +52,8 @@ def _setup_test_database():
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "DROP TABLE IF EXISTS roadmap_snapshot, roadmap_item,"
+                "DROP TABLE IF EXISTS cycle_freeze_item, cycle_freeze,"
+                " roadmap_snapshot, roadmap_item,"
                 " product_jira_source, jira_issue_raw, product CASCADE"
             )
         conn.commit()
@@ -57,7 +62,7 @@ def _setup_test_database():
 @pytest.fixture()
 def client() -> TestClient:
     """FastAPI test client that skips the startup schema migration."""
-    from src.api import app
+    from src.app import app
 
     # Don't re-run startup events — conftest already applied the schema
     with TestClient(app, raise_server_exceptions=True) as c:
