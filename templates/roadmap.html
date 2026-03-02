@@ -87,7 +87,11 @@
   <section class="cycle-section">
     <h2>Cycle {{ cycle_name }}
       {% if cycle_states_in_view.get(cycle_name) == 'frozen' %}
-        <span style="vertical-align:middle;margin-left:.5rem;">🔒</span>
+        <span style="vertical-align:middle;margin-left:.5rem;">🔒 Frozen</span>
+      {% elif cycle_states_in_view.get(cycle_name) == 'future' %}
+        <span style="vertical-align:middle;margin-left:.5rem;">🔮 Future</span>
+      {% elif cycle_states_in_view.get(cycle_name) == 'current' %}
+        <span style="vertical-align:middle;margin-left:.5rem;">▶ Current</span>
       {% endif %}
     </h2>
     {% if cycle_states_in_view.get(cycle_name) == 'frozen' %}

@@ -3,6 +3,7 @@
 import json
 
 import pytest
+from psycopg.types.json import Jsonb
 
 from src.database import get_db_connection
 from src.jira_sync import (
@@ -47,7 +48,7 @@ def _insert_roadmap_item(
     parent_summary: str | None = None,
 ) -> None:
     """Insert a roadmap_item row for testing."""
-    color_status = json.dumps({"health": {"color": color}, "carry_over": None})
+    color_status = Jsonb({"health": {"color": color}, "carry_over": None})
     if product_id is None:
         product_id = _get_uncategorized_id()
     with get_db_connection() as conn, conn.cursor() as cur:
@@ -613,7 +614,7 @@ def test_roadmap_page_unfrozen_cycle_shows_live_data(client):
     assert "🔒" not in resp.text
 
 
-def test_roadmap_page_carry_over_only_counts_frozen():
+def test_roadmap_page_carry_over_only_counts_frozen(client):
     """Carry-over count should only include frozen cycle labels."""
     pid = _insert_product("CarryProd")
     # Item appears in 3 cycles: 25.04 (frozen), 25.10 (frozen), 26.04 (current)
@@ -627,9 +628,17 @@ def test_roadmap_page_carry_over_only_counts_frozen():
     register_cycle("25.10", state="frozen")
     register_cycle("26.04", state="current")
 
+    import asyncio
+
     from src.app import _query_roadmap_items
 
-    grouped, _, _ = _query_roadmap_items(product="CarryProd", cycle="26.04")
+    loop = asyncio.new_event_loop()
+    try:
+        grouped, _, _ = loop.run_until_complete(
+            _query_roadmap_items(product="CarryProd", cycle="26.04")
+        )
+    finally:
+        loop.close()
 
     # The item in cycle 26.04 should have carry_over counting the 2 frozen cycles
     assert "26.04" in grouped
@@ -644,7 +653,7 @@ def test_roadmap_page_carry_over_only_counts_frozen():
     assert co["color"] == "purple"
 
 
-def test_roadmap_page_carry_over_zero_when_no_frozen():
+def test_roadmap_page_carry_over_zero_when_no_frozen(client):
     """Carry-over is None when there are no frozen cycle labels on the item."""
     pid = _insert_product("NoCarryProd")
     _insert_roadmap_item(
@@ -656,9 +665,17 @@ def test_roadmap_page_carry_over_zero_when_no_frozen():
     register_cycle("26.04", state="current")
     register_cycle("26.10", state="future")
 
+    import asyncio
+
     from src.app import _query_roadmap_items
 
-    grouped, _, _ = _query_roadmap_items(product="NoCarryProd", cycle="26.04")
+    loop = asyncio.new_event_loop()
+    try:
+        grouped, _, _ = loop.run_until_complete(
+            _query_roadmap_items(product="NoCarryProd", cycle="26.04")
+        )
+    finally:
+        loop.close()
 
     assert "26.04" in grouped
     items = []

@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from datetime import date
 
 from jira import JIRA
+from psycopg.types.json import Jsonb
 
 from .color_logic import calculate_epic_color
 from .database import get_db_connection
@@ -123,7 +124,7 @@ def sync_jira_data() -> int:
                         fetched_at = now(),
                         processed_at = NULL;
                     """,
-                    (issue.key, json.dumps(raw)),
+                    (issue.key, Jsonb(raw)),
                 )
         conn.commit()
 
@@ -315,7 +316,7 @@ def process_raw_jira_data() -> int:
                         release,
                         issue_labels,
                         product_id,
-                        json.dumps(color_status),
+                        Jsonb(color_status),
                         f"{settings.jira_url}/browse/{jira_key}",
                         parent_key,
                         parent_summary,

@@ -20,7 +20,8 @@ jira==3.10.5
 MarkupSafe==3.0.3
 oauthlib==3.3.1
 packaging==26.0
-psycopg2-binary==2.9.11
+psycopg[binary]==3.2.9
+psycopg-pool==3.2.6
 pydantic==2.12.5
 pydantic-settings==2.13.1
 pydantic_core==2.41.5

@@ -20,7 +20,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import JSONResponse, RedirectResponse
 
 from .auth import configure_oauth, handle_callback, is_authenticated, login_redirect
-from .database import get_db_connection
+from .database import close_pool, get_async_conn, get_db_connection, open_pool
 from .jira_sync import (
     _build_jql,
     get_cycle_configs,
@@ -82,7 +82,13 @@ async def lifespan(application: FastAPI):
     else:
         logger.warning("  OIDC_CLIENT_ID is empty — authentication disabled")
 
+    await open_pool()
+    logger.info("Async connection pool opened")
+
     yield
+
+    await close_pool()
+    logger.info("Async connection pool closed")
 
 
 # Paths that must be accessible without authentication
@@ -238,23 +244,24 @@ def trigger_sync(background_tasks: BackgroundTasks):
 
 
 @app.get("/api/v1/status")
-def get_status():
+async def get_status():
     """Return current sync status enriched with DB row counts and active config."""
     db_counts = {}
     try:
-        with get_db_connection() as conn, conn.cursor() as cur:
-            cur.execute("SELECT count(*) FROM jira_issue_raw")
-            db_counts["raw_issues"] = cur.fetchone()[0]
-            cur.execute("SELECT count(*) FROM jira_issue_raw WHERE processed_at IS NOT NULL")
-            db_counts["raw_processed"] = cur.fetchone()[0]
-            cur.execute("SELECT count(*) FROM roadmap_item")
-            db_counts["roadmap_items"] = cur.fetchone()[0]
-            cur.execute("SELECT count(*) FROM product")
-            db_counts["products"] = cur.fetchone()[0]
-            cur.execute("SELECT count(DISTINCT snapshot_date) FROM roadmap_snapshot")
-            db_counts["snapshot_dates"] = cur.fetchone()[0]
-            cur.execute("SELECT count(*) FROM roadmap_snapshot")
-            db_counts["snapshot_rows"] = cur.fetchone()[0]
+        async with get_async_conn() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("SELECT count(*) FROM jira_issue_raw")
+                db_counts["raw_issues"] = (await cur.fetchone())[0]
+                await cur.execute("SELECT count(*) FROM jira_issue_raw WHERE processed_at IS NOT NULL")
+                db_counts["raw_processed"] = (await cur.fetchone())[0]
+                await cur.execute("SELECT count(*) FROM roadmap_item")
+                db_counts["roadmap_items"] = (await cur.fetchone())[0]
+                await cur.execute("SELECT count(*) FROM product")
+                db_counts["products"] = (await cur.fetchone())[0]
+                await cur.execute("SELECT count(DISTINCT snapshot_date) FROM roadmap_snapshot")
+                db_counts["snapshot_dates"] = (await cur.fetchone())[0]
+                await cur.execute("SELECT count(*) FROM roadmap_snapshot")
+                db_counts["snapshot_rows"] = (await cur.fetchone())[0]
     except Exception:
         db_counts["error"] = "could not query database"
 
@@ -281,14 +288,15 @@ def get_status():
 
 
 @app.get("/api/v1/snapshots")
-def list_snapshots():
+async def list_snapshots():
     """List all available snapshot dates (newest first)."""
-    with get_db_connection() as conn, conn.cursor() as cur:
-        cur.execute(
-            "SELECT snapshot_date, count(*) AS item_count "
-            "FROM roadmap_snapshot GROUP BY snapshot_date ORDER BY snapshot_date DESC"
-        )
-        rows = cur.fetchall()
+    async with get_async_conn() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT snapshot_date, count(*) AS item_count "
+                "FROM roadmap_snapshot GROUP BY snapshot_date ORDER BY snapshot_date DESC"
+            )
+            rows = await cur.fetchall()
     return {
         "data": [{"date": str(r[0]), "item_count": r[1]} for r in rows],
         "meta": {"total": len(rows)},
@@ -296,7 +304,7 @@ def list_snapshots():
 
 
 @app.get("/api/v1/snapshots/diff")
-def snapshot_diff(
+async def snapshot_diff(
     from_date: str = Query(..., description="Start date (YYYY-MM-DD)"),
     to_date: str = Query(..., description="End date (YYYY-MM-DD)"),
 ):
@@ -308,69 +316,70 @@ def snapshot_diff(
     - ``disappeared``  — items present on *from_date* but missing on *to_date*
     - ``appeared``     — items present on *to_date* but missing on *from_date*
     """
-    with get_db_connection() as conn, conn.cursor() as cur:
-        # Verify both dates exist
-        cur.execute(
-            "SELECT DISTINCT snapshot_date FROM roadmap_snapshot "
-            "WHERE snapshot_date IN (%s, %s)",
-            (from_date, to_date),
-        )
-        found_dates = {str(r[0]) for r in cur.fetchall()}
-        missing = {from_date, to_date} - found_dates
-        if missing:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No snapshot found for date(s): {', '.join(sorted(missing))}",
+    async with get_async_conn() as conn:
+        async with conn.cursor() as cur:
+            # Verify both dates exist
+            await cur.execute(
+                "SELECT DISTINCT snapshot_date FROM roadmap_snapshot "
+                "WHERE snapshot_date IN (%s, %s)",
+                (from_date, to_date),
             )
+            found_dates = {str(r[0]) for r in await cur.fetchall()}
+            missing = {from_date, to_date} - found_dates
+            if missing:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No snapshot found for date(s): {', '.join(sorted(missing))}",
+                )
 
-        # --- Color changes (including turned_red) ---
-        cur.execute(
-            """
-            SELECT f.jira_key, f.title, f.color AS old_color, t.color AS new_color,
-                   t.product_name, t.department, t.status
-            FROM roadmap_snapshot f
-            JOIN roadmap_snapshot t ON f.jira_key = t.jira_key
-            WHERE f.snapshot_date = %s AND t.snapshot_date = %s
-              AND f.color IS DISTINCT FROM t.color
-            ORDER BY t.product_name, f.jira_key
-            """,
-            (from_date, to_date),
-        )
-        color_cols = [d[0] for d in cur.description]
-        color_changes = [dict(zip(color_cols, r, strict=False)) for r in cur.fetchall()]
-        turned_red = [c for c in color_changes if c["new_color"] == "red"]
+            # --- Color changes (including turned_red) ---
+            await cur.execute(
+                """
+                SELECT f.jira_key, f.title, f.color AS old_color, t.color AS new_color,
+                       t.product_name, t.department, t.status
+                FROM roadmap_snapshot f
+                JOIN roadmap_snapshot t ON f.jira_key = t.jira_key
+                WHERE f.snapshot_date = %s AND t.snapshot_date = %s
+                  AND f.color IS DISTINCT FROM t.color
+                ORDER BY t.product_name, f.jira_key
+                """,
+                (from_date, to_date),
+            )
+            color_cols = [d[0] for d in cur.description]
+            color_changes = [dict(zip(color_cols, r, strict=False)) for r in await cur.fetchall()]
+            turned_red = [c for c in color_changes if c["new_color"] == "red"]
 
-        # --- Disappeared items ---
-        cur.execute(
-            """
-            SELECT f.jira_key, f.title, f.color, f.status,
-                   f.product_name, f.department
-            FROM roadmap_snapshot f
-            LEFT JOIN roadmap_snapshot t
-              ON f.jira_key = t.jira_key AND t.snapshot_date = %s
-            WHERE f.snapshot_date = %s AND t.jira_key IS NULL
-            ORDER BY f.product_name, f.jira_key
-            """,
-            (to_date, from_date),
-        )
-        dis_cols = [d[0] for d in cur.description]
-        disappeared = [dict(zip(dis_cols, r, strict=False)) for r in cur.fetchall()]
+            # --- Disappeared items ---
+            await cur.execute(
+                """
+                SELECT f.jira_key, f.title, f.color, f.status,
+                       f.product_name, f.department
+                FROM roadmap_snapshot f
+                LEFT JOIN roadmap_snapshot t
+                  ON f.jira_key = t.jira_key AND t.snapshot_date = %s
+                WHERE f.snapshot_date = %s AND t.jira_key IS NULL
+                ORDER BY f.product_name, f.jira_key
+                """,
+                (to_date, from_date),
+            )
+            dis_cols = [d[0] for d in cur.description]
+            disappeared = [dict(zip(dis_cols, r, strict=False)) for r in await cur.fetchall()]
 
-        # --- Appeared items ---
-        cur.execute(
-            """
-            SELECT t.jira_key, t.title, t.color, t.status,
-                   t.product_name, t.department
-            FROM roadmap_snapshot t
-            LEFT JOIN roadmap_snapshot f
-              ON t.jira_key = f.jira_key AND f.snapshot_date = %s
-            WHERE t.snapshot_date = %s AND f.jira_key IS NULL
-            ORDER BY t.product_name, t.jira_key
-            """,
-            (from_date, to_date),
-        )
-        app_cols = [d[0] for d in cur.description]
-        appeared = [dict(zip(app_cols, r, strict=False)) for r in cur.fetchall()]
+            # --- Appeared items ---
+            await cur.execute(
+                """
+                SELECT t.jira_key, t.title, t.color, t.status,
+                       t.product_name, t.department
+                FROM roadmap_snapshot t
+                LEFT JOIN roadmap_snapshot f
+                  ON t.jira_key = f.jira_key AND f.snapshot_date = %s
+                WHERE t.snapshot_date = %s AND f.jira_key IS NULL
+                ORDER BY t.product_name, t.jira_key
+                """,
+                (from_date, to_date),
+            )
+            app_cols = [d[0] for d in cur.description]
+            appeared = [dict(zip(app_cols, r, strict=False)) for r in await cur.fetchall()]
 
     return {
         "from_date": from_date,
@@ -406,15 +415,16 @@ class CycleStateIn(BaseModel):
 
 
 @app.get("/api/v1/cycles")
-def list_cycles():
+async def list_cycles():
     """List all known cycles with their state and metadata."""
     configs = get_cycle_configs()
     frozen = get_frozen_cycles()
 
     # Also gather live cycles from roadmap_item tags
-    with get_db_connection() as conn, conn.cursor() as cur:
-        cur.execute("SELECT DISTINCT unnest(tags) AS tag FROM roadmap_item")
-        all_tags = [r[0] for r in cur.fetchall()]
+    async with get_async_conn() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT DISTINCT unnest(tags) AS tag FROM roadmap_item")
+            all_tags = [r[0] for r in await cur.fetchall()]
 
     live_cycles = sorted(
         [t for t in all_tags if CYCLE_RE.match(t)],
@@ -447,7 +457,7 @@ def list_cycles():
 
 
 @app.post("/api/v1/cycles/{cycle}", status_code=201)
-def register_cycle_endpoint(cycle: str, body: CycleRegisterIn | None = None, request: Request = None):
+async def register_cycle_endpoint(cycle: str, body: CycleRegisterIn | None = None, request: Request = None):
     """Register a new cycle with an initial state."""
     updated_by = None
     if request and request.session.get("user"):
@@ -466,7 +476,7 @@ def register_cycle_endpoint(cycle: str, body: CycleRegisterIn | None = None, req
 
 
 @app.put("/api/v1/cycles/{cycle}")
-def set_cycle_state_endpoint(cycle: str, body: CycleStateIn, request: Request = None):
+async def set_cycle_state_endpoint(cycle: str, body: CycleStateIn, request: Request = None):
     """Change a registered cycle's state.
 
     Side effects:
@@ -489,7 +499,7 @@ def set_cycle_state_endpoint(cycle: str, body: CycleStateIn, request: Request = 
 
 
 @app.delete("/api/v1/cycles/{cycle}", status_code=200)
-def remove_cycle_endpoint(cycle: str):
+async def remove_cycle_endpoint(cycle: str):
     """Remove a cycle from the registry (also deletes freeze data if frozen)."""
     try:
         remove_cycle(cycle)
@@ -500,23 +510,24 @@ def remove_cycle_endpoint(cycle: str):
 
 
 @app.get("/api/v1/cycles/{cycle}/items")
-def get_frozen_cycle_items(cycle: str):
+async def get_frozen_cycle_items(cycle: str):
     """Return the frozen items for a specific cycle."""
     frozen = get_frozen_cycles()
     if cycle not in frozen:
         raise HTTPException(status_code=404, detail=f"Cycle {cycle} is not frozen")
 
-    with get_db_connection() as conn, conn.cursor() as cur:
-        cur.execute(
-            "SELECT jira_key, title, status, color_status, url, "
-            "       product_name, department, parent_key, parent_summary, "
-            "       rank, parent_rank, tags "
-            "FROM cycle_freeze_item WHERE cycle = %s "
-            "ORDER BY parent_rank NULLS LAST, rank NULLS LAST, title",
-            (cycle,),
-        )
-        columns = [desc[0] for desc in cur.description]
-        rows = cur.fetchall()
+    async with get_async_conn() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT jira_key, title, status, color_status, url, "
+                "       product_name, department, parent_key, parent_summary, "
+                "       rank, parent_rank, tags "
+                "FROM cycle_freeze_item WHERE cycle = %s "
+                "ORDER BY parent_rank NULLS LAST, rank NULLS LAST, title",
+                (cycle,),
+            )
+            columns = [desc[0] for desc in cur.description]
+            rows = await cur.fetchall()
 
     return {
         "data": [dict(zip(columns, row, strict=False)) for row in rows],
@@ -525,7 +536,7 @@ def get_frozen_cycle_items(cycle: str):
 
 
 @app.get("/api/v1/roadmap")
-def get_roadmap(
+async def get_roadmap(
     product: str | None = Query(None),
     status: str | None = Query(None),
     release: str | None = Query(None),
@@ -554,10 +565,11 @@ def get_roadmap(
         "ORDER BY r.updated_at DESC"
     )
 
-    with get_db_connection() as conn, conn.cursor() as cur:
-        cur.execute(query, params)
-        columns = [desc[0] for desc in cur.description]
-        rows = cur.fetchall()
+    async with get_async_conn() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(query, params)
+            columns = [desc[0] for desc in cur.description]
+            rows = await cur.fetchall()
 
     return {"data": [dict(zip(columns, row, strict=False)) for row in rows], "meta": {"total": len(rows)}}
 
@@ -608,14 +620,14 @@ class ProductOut(BaseModel):
     jira_sources: list[JiraSourceOut]
 
 
-def _fetch_product_with_sources(cur, product_id: int) -> dict | None:
+async def _fetch_product_with_sources(cur, product_id: int) -> dict | None:
     """Read a single product + its jira_sources from the DB. Returns None if not found."""
-    cur.execute("SELECT id, name, department FROM product WHERE id = %s", (product_id,))
-    row = cur.fetchone()
+    await cur.execute("SELECT id, name, department FROM product WHERE id = %s", (product_id,))
+    row = await cur.fetchone()
     if not row:
         return None
     product = {"id": row[0], "name": row[1], "department": row[2]}
-    cur.execute(
+    await cur.execute(
         "SELECT id, jira_project_key, include_components, exclude_components, "
         "       include_labels, exclude_labels, include_teams, exclude_teams "
         "FROM product_jira_source WHERE product_id = %s ORDER BY id",
@@ -632,119 +644,124 @@ def _fetch_product_with_sources(cur, product_id: int) -> dict | None:
             "include_teams": r[6],
             "exclude_teams": r[7],
         }
-        for r in cur.fetchall()
+        for r in await cur.fetchall()
     ]
     return product
 
 
 @app.get("/api/v1/products")
-def list_products():
+async def list_products():
     """List all products with their Jira source mappings."""
-    with get_db_connection() as conn, conn.cursor() as cur:
-        cur.execute("SELECT id FROM product ORDER BY department, name")
-        product_ids = [r[0] for r in cur.fetchall()]
-        products = [_fetch_product_with_sources(cur, pid) for pid in product_ids]
+    async with get_async_conn() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT id FROM product ORDER BY department, name")
+            product_ids = [r[0] for r in await cur.fetchall()]
+            products = [await _fetch_product_with_sources(cur, pid) for pid in product_ids]
     return {"data": products, "meta": {"total": len(products)}}
 
 
 @app.get("/api/v1/products/{product_id}")
-def get_product(product_id: int):
+async def get_product(product_id: int):
     """Get a single product by ID."""
-    with get_db_connection() as conn, conn.cursor() as cur:
-        product = _fetch_product_with_sources(cur, product_id)
+    async with get_async_conn() as conn:
+        async with conn.cursor() as cur:
+            product = await _fetch_product_with_sources(cur, product_id)
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
     return {"data": product}
 
 
 @app.post("/api/v1/products", status_code=201)
-def create_product(body: ProductIn):
+async def create_product(body: ProductIn):
     """Create a product with optional Jira source mappings."""
-    with get_db_connection() as conn, conn.cursor() as cur:
-        cur.execute(
-            "INSERT INTO product (name, department) VALUES (%s, %s) RETURNING id",
-            (body.name, body.department),
-        )
-        product_id = cur.fetchone()[0]
-
-        for src in body.jira_sources:
-            cur.execute(
-                "INSERT INTO product_jira_source "
-                "  (product_id, jira_project_key, include_components, exclude_components, "
-                "   include_labels, exclude_labels, include_teams, exclude_teams) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                (
-                    product_id,
-                    src.jira_project_key,
-                    src.include_components,
-                    src.exclude_components,
-                    src.include_labels,
-                    src.exclude_labels,
-                    src.include_teams,
-                    src.exclude_teams,
-                ),
+    async with get_async_conn() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "INSERT INTO product (name, department) VALUES (%s, %s) RETURNING id",
+                (body.name, body.department),
             )
+            product_id = (await cur.fetchone())[0]
 
-        conn.commit()
-        product = _fetch_product_with_sources(cur, product_id)
+            for src in body.jira_sources:
+                await cur.execute(
+                    "INSERT INTO product_jira_source "
+                    "  (product_id, jira_project_key, include_components, exclude_components, "
+                    "   include_labels, exclude_labels, include_teams, exclude_teams) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                    (
+                        product_id,
+                        src.jira_project_key,
+                        src.include_components,
+                        src.exclude_components,
+                        src.include_labels,
+                        src.exclude_labels,
+                        src.include_teams,
+                        src.exclude_teams,
+                    ),
+                )
+
+            await conn.commit()
+            product = await _fetch_product_with_sources(cur, product_id)
 
     return {"data": product}
 
 
 @app.put("/api/v1/products/{product_id}")
-def update_product(product_id: int, body: ProductIn):
+async def update_product(product_id: int, body: ProductIn):
     """Replace a product's details and Jira source mappings entirely."""
-    with get_db_connection() as conn, conn.cursor() as cur:
-        cur.execute("SELECT id FROM product WHERE id = %s", (product_id,))
-        if not cur.fetchone():
-            raise HTTPException(status_code=404, detail="Product not found")
+    async with get_async_conn() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT id FROM product WHERE id = %s", (product_id,))
+            if not await cur.fetchone():
+                raise HTTPException(status_code=404, detail="Product not found")
 
-        cur.execute(
-            "UPDATE product SET name = %s, department = %s, updated_at = now() WHERE id = %s",
-            (body.name, body.department, product_id),
-        )
-
-        # Replace all source rules (simple and safe for small cardinality)
-        cur.execute("DELETE FROM product_jira_source WHERE product_id = %s", (product_id,))
-        for src in body.jira_sources:
-            cur.execute(
-                "INSERT INTO product_jira_source "
-                "  (product_id, jira_project_key, include_components, exclude_components, "
-                "   include_labels, exclude_labels, include_teams, exclude_teams) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                (
-                    product_id,
-                    src.jira_project_key,
-                    src.include_components,
-                    src.exclude_components,
-                    src.include_labels,
-                    src.exclude_labels,
-                    src.include_teams,
-                    src.exclude_teams,
-                ),
+            await cur.execute(
+                "UPDATE product SET name = %s, department = %s, updated_at = now() WHERE id = %s",
+                (body.name, body.department, product_id),
             )
 
-        conn.commit()
-        product = _fetch_product_with_sources(cur, product_id)
+            # Replace all source rules (simple and safe for small cardinality)
+            await cur.execute("DELETE FROM product_jira_source WHERE product_id = %s", (product_id,))
+            for src in body.jira_sources:
+                await cur.execute(
+                    "INSERT INTO product_jira_source "
+                    "  (product_id, jira_project_key, include_components, exclude_components, "
+                    "   include_labels, exclude_labels, include_teams, exclude_teams) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                    (
+                        product_id,
+                        src.jira_project_key,
+                        src.include_components,
+                        src.exclude_components,
+                        src.include_labels,
+                        src.exclude_labels,
+                        src.include_teams,
+                        src.exclude_teams,
+                    ),
+                )
+
+            await conn.commit()
+            product = await _fetch_product_with_sources(cur, product_id)
 
     return {"data": product}
 
 
 @app.delete("/api/v1/products/{product_id}", status_code=204)
-def delete_product(product_id: int):
+async def delete_product(product_id: int):
     """Delete a product and its Jira source mappings.
 
     Roadmap items referencing this product will have their product_id set to NULL.
     """
-    with get_db_connection() as conn, conn.cursor() as cur:
-        cur.execute("SELECT id FROM product WHERE id = %s", (product_id,))
-        if not cur.fetchone():
-            raise HTTPException(status_code=404, detail="Product not found")
+    async with get_async_conn() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT id FROM product WHERE id = %s", (product_id,))
+            if not await cur.fetchone():
+                raise HTTPException(status_code=404, detail="Product not found")
 
-        # Unlink roadmap items so they don't get cascade-deleted
-        cur.execute("UPDATE roadmap_item SET product_id = NULL WHERE product_id = %s", (product_id,))
-        cur.execute("DELETE FROM product WHERE id = %s", (product_id,))
-        conn.commit()
+            # Unlink roadmap items so they don't get cascade-deleted
+            await cur.execute("UPDATE roadmap_item SET product_id = NULL WHERE product_id = %s", (product_id,))
+            await cur.execute("DELETE FROM product WHERE id = %s", (product_id,))
+            await conn.commit()
 
     return None
 
@@ -756,48 +773,49 @@ def delete_product(product_id: int):
 CYCLE_RE = re.compile(r"^\d{2}\.\d{2}$")
 
 
-def _query_filter_options(department: str | None = None) -> dict:
+async def _query_filter_options(department: str | None = None) -> dict:
     """Fetch distinct departments, products (filtered by department), and cycle labels for filter dropdowns.
 
     Also returns a ``dept_products`` mapping (department → [product names]) so the
     frontend can dynamically update the product dropdown when the department changes,
     and a ``cycle_states`` mapping (cycle → state) from ``cycle_config``.
     """
-    with get_db_connection() as conn, conn.cursor() as cur:
-        cur.execute("SELECT DISTINCT department FROM product ORDER BY department")
-        departments = [r[0] for r in cur.fetchall()]
+    async with get_async_conn() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT DISTINCT department FROM product ORDER BY department")
+            departments = [r[0] for r in await cur.fetchall()]
 
-        # Products for the selected department (or all if none selected)
-        if department:
-            cur.execute("SELECT DISTINCT name FROM product WHERE department = %s ORDER BY name", (department,))
-        else:
-            cur.execute("SELECT DISTINCT name FROM product ORDER BY name")
-        products = [r[0] for r in cur.fetchall()]
+            # Products for the selected department (or all if none selected)
+            if department:
+                await cur.execute("SELECT DISTINCT name FROM product WHERE department = %s ORDER BY name", (department,))
+            else:
+                await cur.execute("SELECT DISTINCT name FROM product ORDER BY name")
+            products = [r[0] for r in await cur.fetchall()]
 
-        # Full department → products mapping for client-side filtering
-        cur.execute("SELECT department, name FROM product ORDER BY department, name")
-        dept_products: dict[str, list[str]] = {}
-        for r in cur.fetchall():
-            dept_products.setdefault(r[0], []).append(r[1])
+            # Full department → products mapping for client-side filtering
+            await cur.execute("SELECT department, name FROM product ORDER BY department, name")
+            dept_products: dict[str, list[str]] = {}
+            for r in await cur.fetchall():
+                dept_products.setdefault(r[0], []).append(r[1])
 
-        # Cycles come from the tags array (labels) on roadmap_item.
-        # unnest expands the array; we then filter for XX.XX pattern in Python.
-        # Also include cycles that exist in cycle_config or cycle_freeze.
-        cur.execute("SELECT DISTINCT unnest(tags) AS tag FROM roadmap_item")
-        all_tags = [r[0] for r in cur.fetchall()]
-        live_cycles = {t for t in all_tags if CYCLE_RE.match(t)}
+            # Cycles come from the tags array (labels) on roadmap_item.
+            # unnest expands the array; we then filter for XX.XX pattern in Python.
+            # Also include cycles that exist in cycle_config or cycle_freeze.
+            await cur.execute("SELECT DISTINCT unnest(tags) AS tag FROM roadmap_item")
+            all_tags = [r[0] for r in await cur.fetchall()]
+            live_cycles = {t for t in all_tags if CYCLE_RE.match(t)}
 
-        cur.execute("SELECT cycle FROM cycle_freeze")
-        frozen_cycles = {r[0] for r in cur.fetchall()}
+            await cur.execute("SELECT cycle FROM cycle_freeze")
+            frozen_cycles = {r[0] for r in await cur.fetchall()}
 
-        cur.execute("SELECT cycle FROM cycle_config")
-        config_cycles = {r[0] for r in cur.fetchall()}
+            await cur.execute("SELECT cycle FROM cycle_config")
+            config_cycles = {r[0] for r in await cur.fetchall()}
 
-        cycles = sorted(live_cycles | frozen_cycles | config_cycles, reverse=True)
+            cycles = sorted(live_cycles | frozen_cycles | config_cycles, reverse=True)
 
-        # Cycle state map for UI badges
-        cur.execute("SELECT cycle, state FROM cycle_config")
-        cycle_states = {r[0]: r[1] for r in cur.fetchall()}
+            # Cycle state map for UI badges
+            await cur.execute("SELECT cycle, state FROM cycle_config")
+            cycle_states = {r[0]: r[1] for r in await cur.fetchall()}
 
     return {
         "departments": departments,
@@ -808,7 +826,7 @@ def _query_filter_options(department: str | None = None) -> dict:
     }
 
 
-def _query_frozen_items_for_cycle(
+async def _query_frozen_items_for_cycle(
     frozen_cycle: str,
     department: str | None = None,
     product: str | None = None,
@@ -833,10 +851,11 @@ def _query_frozen_items_for_cycle(
         "ORDER BY f.parent_rank NULLS LAST, f.rank NULLS LAST, f.title"
     )
 
-    with get_db_connection() as conn, conn.cursor() as cur:
-        cur.execute(query, params)
-        columns = [desc[0] for desc in cur.description]
-        rows = cur.fetchall()
+    async with get_async_conn() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(query, params)
+            columns = [desc[0] for desc in cur.description]
+            rows = await cur.fetchall()
 
     items = []
     for row in rows:
@@ -848,7 +867,7 @@ def _query_frozen_items_for_cycle(
     return items
 
 
-def _query_roadmap_items(
+async def _query_roadmap_items(
     department: str | None = None,
     product: str | None = None,
     cycle: str | None = None,
@@ -897,10 +916,11 @@ def _query_roadmap_items(
         "ORDER BY r.parent_rank NULLS LAST, r.rank NULLS LAST, r.title"
     )
 
-    with get_db_connection() as conn, conn.cursor() as cur:
-        cur.execute(query, params)
-        columns = [desc[0] for desc in cur.description]
-        rows = cur.fetchall()
+    async with get_async_conn() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(query, params)
+            columns = [desc[0] for desc in cur.description]
+            rows = await cur.fetchall()
 
     # Build cycle → objective → items mapping
     raw: dict[str, dict[str, list[dict]]] = {}
@@ -978,7 +998,7 @@ def _query_roadmap_items(
         frozen_to_load = list(frozen_map.keys())  # all frozen cycles
 
     for fc in frozen_to_load:
-        frozen_items = _query_frozen_items_for_cycle(fc, department=department, product=product)
+        frozen_items = await _query_frozen_items_for_cycle(fc, department=department, product=product)
         cycle_states_in_view[fc] = config_map[fc]["state"] if fc in config_map else "frozen"
 
         for item in frozen_items:
@@ -1024,21 +1044,21 @@ def _query_roadmap_items(
 
 
 @app.get("/", response_class=HTMLResponse)
-def roadmap_page(
+async def roadmap_page(
     request: Request,
     department: str | None = Query(None),
     product: str | None = Query(None),
     cycle: str | None = Query(None),
 ):
     """Render the main roadmap page with server-side Jinja2 templates."""
-    options = _query_filter_options(department=department)
+    options = await _query_filter_options(department=department)
 
     # Force a product selection — if none chosen, default to the first available
     available_products = options["products"]
     if not product or product not in available_products:
         product = available_products[0] if available_products else None
 
-    grouped_items, objective_urls, cycle_states = _query_roadmap_items(
+    grouped_items, objective_urls, cycle_states = await _query_roadmap_items(
         department=department, product=product, cycle=cycle,
     )
 
