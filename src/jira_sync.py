@@ -4,12 +4,14 @@ Two-phase approach:
   1. ``sync_jira_data``      — fetch issues via JQL and upsert raw JSON into ``jira_issue_raw``.
   2. ``process_raw_jira_data`` — read unprocessed rows, derive roadmap fields, upsert into ``roadmap_item``.
   3. ``take_daily_snapshot``  — once per day, snapshot all ``roadmap_item`` rows for change-tracking.
+  4. ``freeze_cycle`` / ``unfreeze_cycle`` — lock a cycle's data for historical preservation.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import date
 
@@ -396,3 +398,118 @@ def take_daily_snapshot(snapshot_date: date | None = None) -> int:
 
     logger.info("Snapshot for %s created — %d items captured", snapshot_date, count)
     return count
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — cycle freeze / unfreeze
+# ---------------------------------------------------------------------------
+
+CYCLE_RE = re.compile(r"^\d{2}\.\d{2}$")
+
+
+def freeze_cycle(cycle: str, frozen_by: str | None = None, note: str | None = None) -> int:
+    """Freeze a cycle by snapshotting every ``roadmap_item`` tagged with that cycle label.
+
+    Captures the *current* state of each item — title, status, color, product,
+    objective — into ``cycle_freeze_item``.  Once frozen, the roadmap page
+    serves this immutable copy instead of live Jira data.
+
+    Args:
+        cycle: The cycle label to freeze (e.g. ``"25.10"``).
+        frozen_by: Optional identifier of the person who triggered the freeze.
+        note: Optional free-text note.
+
+    Returns:
+        The number of items captured.
+
+    Raises:
+        ValueError: If the cycle label doesn't match ``XX.XX``.
+        RuntimeError: If the cycle is already frozen.
+    """
+    if not CYCLE_RE.match(cycle):
+        raise ValueError(f"Invalid cycle label: {cycle!r} (expected XX.XX format)")
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            # Check if already frozen
+            cur.execute("SELECT 1 FROM cycle_freeze WHERE cycle = %s", (cycle,))
+            if cur.fetchone():
+                raise RuntimeError(f"Cycle {cycle} is already frozen")
+
+            # Create the freeze header
+            cur.execute(
+                "INSERT INTO cycle_freeze (cycle, frozen_by, note) VALUES (%s, %s, %s)",
+                (cycle, frozen_by, note),
+            )
+
+            # Snapshot every item that carries this cycle label
+            cur.execute(
+                """
+                INSERT INTO cycle_freeze_item
+                    (cycle, jira_key, title, status, color_status, url,
+                     product_id, product_name, department,
+                     parent_key, parent_summary, rank, parent_rank, tags)
+                SELECT
+                    %s,
+                    r.jira_key,
+                    r.title,
+                    r.status,
+                    r.color_status,
+                    r.url,
+                    r.product_id,
+                    p.name,
+                    p.department,
+                    r.parent_key,
+                    r.parent_summary,
+                    r.rank,
+                    r.parent_rank,
+                    r.tags
+                FROM roadmap_item r
+                LEFT JOIN product p ON p.id = r.product_id
+                WHERE %s = ANY(r.tags)
+                """,
+                (cycle, cycle),
+            )
+            count = cur.rowcount
+        conn.commit()
+
+    logger.info("Cycle %s frozen — %d items captured", cycle, count)
+    return count
+
+
+def unfreeze_cycle(cycle: str) -> None:
+    """Remove a cycle freeze, restoring live Jira data for that cycle.
+
+    Deletes the ``cycle_freeze`` row (and cascades to ``cycle_freeze_item``).
+
+    Raises:
+        ValueError: If the cycle is not currently frozen.
+    """
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM cycle_freeze WHERE cycle = %s", (cycle,))
+            if cur.rowcount == 0:
+                raise ValueError(f"Cycle {cycle} is not frozen")
+        conn.commit()
+
+    logger.info("Cycle %s unfrozen — live data restored", cycle)
+
+
+def get_frozen_cycles() -> dict[str, dict]:
+    """Return a mapping of frozen cycle labels to their metadata.
+
+    Returns:
+        ``{"25.10": {"frozen_at": "...", "frozen_by": "...", "note": "..."}, ...}``
+    """
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT cycle, frozen_at, frozen_by, note FROM cycle_freeze ORDER BY cycle DESC"
+        )
+        return {
+            row[0]: {
+                "frozen_at": row[1].isoformat() if row[1] else None,
+                "frozen_by": row[2],
+                "note": row[3],
+            }
+            for row in cur.fetchall()
+        }

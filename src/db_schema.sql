@@ -101,6 +101,37 @@ CREATE TABLE IF NOT EXISTS roadmap_snapshot (
 CREATE INDEX IF NOT EXISTS idx_snapshot_date ON roadmap_snapshot(snapshot_date);
 CREATE INDEX IF NOT EXISTS idx_snapshot_jira_key ON roadmap_snapshot(jira_key);
 
+-- Frozen cycles — a closed cycle's data is immutable until explicitly unfrozen.
+CREATE TABLE IF NOT EXISTS cycle_freeze (
+    cycle       VARCHAR(16)  PRIMARY KEY,   -- e.g. '25.10'
+    frozen_at   TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    frozen_by   VARCHAR(256),               -- email of the user who triggered the freeze
+    note        TEXT                         -- optional free-text note (e.g. "Q1 2026 exec review")
+);
+
+-- Frozen item state — one row per epic per frozen cycle.
+-- Denormalized so it is completely self-contained (like roadmap_snapshot).
+CREATE TABLE IF NOT EXISTS cycle_freeze_item (
+    id              SERIAL       PRIMARY KEY,
+    cycle           VARCHAR(16)  NOT NULL REFERENCES cycle_freeze(cycle) ON DELETE CASCADE,
+    jira_key        VARCHAR(64)  NOT NULL,
+    title           VARCHAR(512) NOT NULL,
+    status          VARCHAR(64)  NOT NULL,
+    color_status    JSONB,
+    url             TEXT,
+    product_id      INTEGER,
+    product_name    VARCHAR(128),
+    department      VARCHAR(128),
+    parent_key      VARCHAR(64),
+    parent_summary  VARCHAR(512),
+    rank            VARCHAR(64),
+    parent_rank     VARCHAR(64),
+    tags            TEXT[],
+    UNIQUE (cycle, jira_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cycle_freeze_item_cycle ON cycle_freeze_item(cycle);
+
 -- Seed a catch-all product so FK never fails
 INSERT INTO product (name, department)
 VALUES ('Uncategorized', 'Unassigned')
