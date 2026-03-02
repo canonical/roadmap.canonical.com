@@ -40,7 +40,7 @@ def _setup_test_database():
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "DROP TABLE IF EXISTS cycle_config, cycle_freeze_item, cycle_freeze,"
+                "DROP TABLE IF EXISTS sync_metadata, cycle_config, cycle_freeze_item, cycle_freeze,"
                 " roadmap_snapshot, roadmap_item,"
                 " product_jira_source, jira_issue_raw, product CASCADE"
             )
@@ -54,7 +54,7 @@ def _setup_test_database():
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "DROP TABLE IF EXISTS cycle_config, cycle_freeze_item, cycle_freeze,"
+                "DROP TABLE IF EXISTS sync_metadata, cycle_config, cycle_freeze_item, cycle_freeze,"
                 " roadmap_snapshot, roadmap_item,"
                 " product_jira_source, jira_issue_raw, product CASCADE"
             )
