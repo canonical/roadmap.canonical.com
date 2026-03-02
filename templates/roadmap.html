@@ -30,7 +30,7 @@
       <label for="cycle">Cycle</label>
       <select name="cycle" id="cycle" class="p-form-validation__input">
         {% for c in cycles %}
-          <option value="{{ c }}" {{ 'selected' if c == selected_cycle }}>{{ c }}{% if c in frozen_cycles %} 🔒{% endif %}</option>
+          <option value="{{ c }}" {{ 'selected' if c == selected_cycle }}>{{ c }}{% if cycle_states.get(c) == 'frozen' %} 🔒{% endif %}</option>
         {% endfor %}
       </select>
     </div>
@@ -86,11 +86,11 @@
   {% for cycle_name, objectives_map in grouped_items.items() %}
   <section class="cycle-section">
     <h2>Cycle {{ cycle_name }}
-      {% if cycle_name in frozen_cycles %}
-        <span class="p-status-label--positive" style="vertical-align:middle;margin-left:.5rem;">🔒 Frozen</span>
+      {% if cycle_states_in_view.get(cycle_name) == 'frozen' %}
+        <span style="vertical-align:middle;margin-left:.5rem;">🔒</span>
       {% endif %}
     </h2>
-    {% if cycle_name in frozen_cycles %}
+    {% if cycle_states_in_view.get(cycle_name) == 'frozen' %}
     <p class="p-text--small u-text--muted" style="margin-top:-.5rem;">
       This cycle's data is frozen and will not change with Jira syncs.
     </p>

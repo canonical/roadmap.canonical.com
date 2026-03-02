@@ -366,3 +366,91 @@
 2. At cycle closure: `POST /api/v1/cycles/25.10/freeze` (with optional note).
 3. From this point: viewing `25.10` shows frozen data; `26.04` continues live.
 4. If corrections are needed: `DELETE /api/v1/cycles/25.10/freeze` + re-freeze.
+
+---
+
+## 2026-03-02 — Cycle lifecycle management (cycle_config with frozen/current/future states)
+
+### What was built
+- **Explicit cycle lifecycle states** via `cycle_config` table — each cycle is registered
+  with one of three states: `frozen` (immutable snapshot), `current` (live Jira sync),
+  or `future` (all items forced to Inactive/white).
+- **State transition API** — `POST /api/v1/cycles/{cycle}` to register, `PUT` to change state,
+  `DELETE` to remove. Side effects: transitioning **to frozen** auto-creates the freeze snapshot;
+  transitioning **away from frozen** auto-deletes the snapshot.
+- **At-most-one-current constraint** — enforced at the API/database level. Zero current cycles
+  is allowed during transition windows (e.g. freezing old before activating new).
+- **Future cycle Inactive override** — items in future cycles are displayed as white/Inactive
+  regardless of their actual Jira health color. This prevents premature attention to planned work.
+- **Carry-over only counts frozen cycles** — the purple carry-over badge now counts only
+  **frozen** cycle labels on an item, not all cycle labels. This means carry-over reflects
+  actual past-cycle persistence, not just multi-cycle planning.
+- **UI badges**: 🔒 Frozen, ▶ Current, 🔮 Future displayed in both the cycle dropdown and
+  the cycle section heading. Future cycles show a descriptive banner.
+- **29 new tests** (50 total in test_cycle_freeze.py) covering register/set_state/remove,
+  API endpoints, future Inactive override, carry-over-only-frozen, and full lifecycle scenario.
+
+### New/changed API endpoints
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/cycles` | List all cycles with state (replaces old frozen-only view) |
+| `POST` | `/api/v1/cycles/{cycle}` | Register a new cycle (default: future) |
+| `PUT` | `/api/v1/cycles/{cycle}` | Change state (frozen/current/future) with side effects |
+| `DELETE` | `/api/v1/cycles/{cycle}` | Remove cycle from registry |
+| `GET` | `/api/v1/cycles/{cycle}/items` | Get frozen items (unchanged) |
+
+### Removed API endpoints
+| Method | Path | Replacement |
+|--------|------|-------------|
+| `POST` | `/api/v1/cycles/{cycle}/freeze` | `PUT /api/v1/cycles/{cycle}` with `{"state": "frozen"}` |
+| `DELETE` | `/api/v1/cycles/{cycle}/freeze` | `PUT /api/v1/cycles/{cycle}` with `{"state": "current"}` |
+
+### Schema change
+- **New table `cycle_config`**: `(cycle VARCHAR(16) PK, state VARCHAR(16) CHECK(...), updated_at, updated_by)`.
+- Existing `cycle_freeze` + `cycle_freeze_item` tables preserved — they are now managed as
+  a side effect of state transitions, not directly by the API.
+
+### Key decisions
+1. **Explicit state over convention** — instead of deriving state from freeze/date heuristics,
+   an admin explicitly sets each cycle's state. This gives full manual control over transitions.
+2. **Any-to-any transitions** — no restriction on which states can transition to which.
+   The admin might need to unfreeze→current for corrections, or future→frozen to pre-freeze.
+3. **Freeze as side effect** — `cycle_freeze` is an implementation detail; the API operates
+   on `cycle_config` state. Setting state=frozen triggers `_ensure_freeze_snapshot()`,
+   leaving frozen triggers `_delete_freeze_snapshot()`.
+4. **Zero current cycles allowed** — during the brief window between freezing the old cycle
+   and activating the new one, there may be no current cycle. This is by design.
+5. **Carry-over semantics changed** — carry-over now reflects how many past (frozen) cycles
+   an item has appeared in, not just "how many cycle labels it has". The `calculate_epic_color`
+   function gained an optional `frozen_cycles` parameter; sync pipeline uses the old behaviour
+   (all labels), display layer uses the new behaviour (frozen only).
+6. **`color_logic.py` backwards-compatible** — the `frozen_cycles` parameter defaults to `None`,
+   preserving the old all-labels counting for the sync pipeline. The display layer in `app.py`
+   recalculates carry-over with knowledge of which cycles are frozen.
+
+### Files modified
+- `src/db_schema.sql` — added `cycle_config` table
+- `src/jira_sync.py` — added `get_cycle_configs()`, `register_cycle()`, `set_cycle_state()`,
+  `remove_cycle()`, `_ensure_freeze_snapshot()`, `_delete_freeze_snapshot()`
+- `src/color_logic.py` — `calculate_epic_color` now accepts optional `frozen_cycles` set;
+  when provided, carry-over counts only frozen labels
+- `src/app.py` — replaced freeze-specific endpoints with state-based CRUD; updated
+  `_query_filter_options` to include `cycle_states`; rewrote `_query_roadmap_items` for
+  future/Inactive override and frozen-only carry-over; updated template context
+- `templates/roadmap.html` — state-based badges (🔒/▶/🔮), future cycle banner
+- `tests/conftest.py` — added `cycle_config` to DROP cascade
+- `tests/test_cycle_freeze.py` — rewritten: 50 tests total (legacy freeze + cycle_config +
+  API + page integration + carry-over + full lifecycle scenario)
+- `README.md` — added cycle lifecycle docs, state machine diagram, carry-over explanation;
+  fixed stale `src.api:app` → `src.app:app`; added new API endpoints to reference table
+- `memory.md` — this entry
+
+### Test status
+- **121/121 tests pass, 0 failures, 0 lint errors** (ignoring pre-existing SIM102)
+
+### Workflow for end users
+1. **Register upcoming cycles**: `POST /api/v1/cycles/27.04 {"state": "future"}` — items appear but all show as Inactive.
+2. **Activate the new cycle**: `PUT /api/v1/cycles/27.04 {"state": "current"}` — items now show live health colors.
+3. **Freeze the old cycle first**: `PUT /api/v1/cycles/26.10 {"state": "frozen"}` — snapshot taken, data immutable.
+4. **Typical steady state**: one frozen per past cycle, one current, zero or more future.
+5. **Corrections**: `PUT /api/v1/cycles/26.10 {"state": "current"}` to unfreeze temporarily, re-freeze when done.

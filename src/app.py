@@ -23,12 +23,14 @@ from .auth import configure_oauth, handle_callback, is_authenticated, login_redi
 from .database import get_db_connection
 from .jira_sync import (
     _build_jql,
-    freeze_cycle,
+    get_cycle_configs,
     get_frozen_cycles,
     process_raw_jira_data,
+    register_cycle,
+    remove_cycle,
+    set_cycle_state,
     sync_jira_data,
     take_daily_snapshot,
-    unfreeze_cycle,
 )
 from .settings import settings
 
@@ -387,19 +389,26 @@ def snapshot_diff(
 
 
 # ---------------------------------------------------------------------------
-# Cycle freeze endpoints — preserve historical cycle state
+# Cycle lifecycle endpoints — manage cycle state (frozen / current / future)
 # ---------------------------------------------------------------------------
 
 
-class CycleFreezeIn(BaseModel):
-    """Input schema for freezing a cycle."""
+class CycleRegisterIn(BaseModel):
+    """Input schema for registering a new cycle."""
 
-    note: str | None = None
+    state: str = "future"  # default to future for newly registered cycles
+
+
+class CycleStateIn(BaseModel):
+    """Input schema for changing a cycle's state."""
+
+    state: str
 
 
 @app.get("/api/v1/cycles")
 def list_cycles():
-    """List all known cycles with their freeze status."""
+    """List all known cycles with their state and metadata."""
+    configs = get_cycle_configs()
     frozen = get_frozen_cycles()
 
     # Also gather live cycles from roadmap_item tags
@@ -412,50 +421,82 @@ def list_cycles():
         reverse=True,
     )
 
-    # Frozen cycles that have no live items should still appear
+    # Merge all known cycle labels: live items + registered configs
     all_cycle_labels = sorted(
-        set(live_cycles) | set(frozen.keys()),
+        set(live_cycles) | set(configs.keys()),
         reverse=True,
     )
 
     data = []
     for c in all_cycle_labels:
-        entry = {"cycle": c, "frozen": c in frozen}
+        entry: dict = {"cycle": c}
+        if c in configs:
+            entry["state"] = configs[c]["state"]
+            entry["updated_at"] = configs[c]["updated_at"]
+            entry["updated_by"] = configs[c]["updated_by"]
+        else:
+            entry["state"] = None  # not registered — appears in Jira but not managed
+        # Include frozen metadata if available
         if c in frozen:
-            entry.update(frozen[c])
+            entry["frozen_at"] = frozen[c]["frozen_at"]
+            entry["frozen_by"] = frozen[c]["frozen_by"]
+            entry["note"] = frozen[c]["note"]
         data.append(entry)
 
     return {"data": data, "meta": {"total": len(data)}}
 
 
-@app.post("/api/v1/cycles/{cycle}/freeze", status_code=201)
-def freeze_cycle_endpoint(cycle: str, body: CycleFreezeIn | None = None, request: Request = None):
-    """Freeze a cycle — snapshot its current roadmap items as immutable historical data."""
-    frozen_by = None
+@app.post("/api/v1/cycles/{cycle}", status_code=201)
+def register_cycle_endpoint(cycle: str, body: CycleRegisterIn | None = None, request: Request = None):
+    """Register a new cycle with an initial state."""
+    updated_by = None
     if request and request.session.get("user"):
-        frozen_by = request.session["user"].get("email")
+        updated_by = request.session["user"].get("email")
 
-    note = body.note if body else None
+    state = body.state if body else "future"
 
     try:
-        count = freeze_cycle(cycle, frozen_by=frozen_by, note=note)
+        result = register_cycle(cycle, state=state, updated_by=updated_by)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    return {"message": f"Cycle {cycle} frozen", "items_captured": count}
+    return {"message": f"Cycle {cycle} registered as {state}", **result}
 
 
-@app.delete("/api/v1/cycles/{cycle}/freeze", status_code=200)
-def unfreeze_cycle_endpoint(cycle: str):
-    """Unfreeze a cycle — remove frozen data and restore live Jira view."""
+@app.put("/api/v1/cycles/{cycle}")
+def set_cycle_state_endpoint(cycle: str, body: CycleStateIn, request: Request = None):
+    """Change a registered cycle's state.
+
+    Side effects:
+    - Setting state to ``frozen`` creates a freeze snapshot.
+    - Moving away from ``frozen`` deletes the snapshot.
+    - At most one cycle can be ``current`` at any time.
+    """
+    updated_by = None
+    if request and request.session.get("user"):
+        updated_by = request.session["user"].get("email")
+
     try:
-        unfreeze_cycle(cycle)
+        result = set_cycle_state(cycle, new_state=body.state, updated_by=updated_by)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return {"message": f"Cycle {cycle} state set to {body.state}", **result}
+
+
+@app.delete("/api/v1/cycles/{cycle}", status_code=200)
+def remove_cycle_endpoint(cycle: str):
+    """Remove a cycle from the registry (also deletes freeze data if frozen)."""
+    try:
+        remove_cycle(cycle)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    return {"message": f"Cycle {cycle} unfrozen — live data restored"}
+    return {"message": f"Cycle {cycle} removed"}
 
 
 @app.get("/api/v1/cycles/{cycle}/items")
@@ -719,7 +760,8 @@ def _query_filter_options(department: str | None = None) -> dict:
     """Fetch distinct departments, products (filtered by department), and cycle labels for filter dropdowns.
 
     Also returns a ``dept_products`` mapping (department → [product names]) so the
-    frontend can dynamically update the product dropdown when the department changes.
+    frontend can dynamically update the product dropdown when the department changes,
+    and a ``cycle_states`` mapping (cycle → state) from ``cycle_config``.
     """
     with get_db_connection() as conn, conn.cursor() as cur:
         cur.execute("SELECT DISTINCT department FROM product ORDER BY department")
@@ -740,7 +782,7 @@ def _query_filter_options(department: str | None = None) -> dict:
 
         # Cycles come from the tags array (labels) on roadmap_item.
         # unnest expands the array; we then filter for XX.XX pattern in Python.
-        # Also include cycles that exist only as frozen records.
+        # Also include cycles that exist in cycle_config or cycle_freeze.
         cur.execute("SELECT DISTINCT unnest(tags) AS tag FROM roadmap_item")
         all_tags = [r[0] for r in cur.fetchall()]
         live_cycles = {t for t in all_tags if CYCLE_RE.match(t)}
@@ -748,9 +790,22 @@ def _query_filter_options(department: str | None = None) -> dict:
         cur.execute("SELECT cycle FROM cycle_freeze")
         frozen_cycles = {r[0] for r in cur.fetchall()}
 
-        cycles = sorted(live_cycles | frozen_cycles, reverse=True)
+        cur.execute("SELECT cycle FROM cycle_config")
+        config_cycles = {r[0] for r in cur.fetchall()}
 
-    return {"departments": departments, "products": products, "cycles": cycles, "dept_products": dept_products}
+        cycles = sorted(live_cycles | frozen_cycles | config_cycles, reverse=True)
+
+        # Cycle state map for UI badges
+        cur.execute("SELECT cycle, state FROM cycle_config")
+        cycle_states = {r[0]: r[1] for r in cur.fetchall()}
+
+    return {
+        "departments": departments,
+        "products": products,
+        "cycles": cycles,
+        "dept_products": dept_products,
+        "cycle_states": cycle_states,
+    }
 
 
 def _query_frozen_items_for_cycle(
@@ -797,7 +852,7 @@ def _query_roadmap_items(
     department: str | None = None,
     product: str | None = None,
     cycle: str | None = None,
-) -> tuple[OrderedDict[str, OrderedDict[str, list[dict]]], dict[str, str], set[str]]:
+) -> tuple[OrderedDict[str, OrderedDict[str, list[dict]]], dict[str, str], dict[str, str]]:
     """Return roadmap items grouped by cycle → objective (parent).
 
     Structure: ``{cycle: {objective_label: [items]}}``
@@ -807,11 +862,19 @@ def _query_roadmap_items(
     - Items with no cycle labels are excluded.
     - An item with multiple cycle labels appears in each bucket.
     - **Frozen cycles** are served from ``cycle_freeze_item`` instead of live data.
+    - **Future cycles** have all item colors overridden to white/Inactive.
+    - **Carry-over** counts only frozen cycle labels on an item.
 
     Returns:
-        A tuple of (grouped_items, objective_urls, frozen_cycle_labels).
+        A tuple of (grouped_items, objective_urls, cycle_states_in_view).
+        ``cycle_states_in_view`` maps cycle label → state (``"frozen"``/``"current"``/``"future"``/``None``).
     """
     frozen_map = get_frozen_cycles()  # {cycle: {frozen_at, frozen_by, note}}
+    config_map = get_cycle_configs()  # {cycle: {state, updated_at, updated_by}}
+
+    # Determine which cycles are in which state
+    frozen_cycle_labels = {c for c, cfg in config_map.items() if cfg["state"] == "frozen"}
+    future_cycle_labels = {c for c, cfg in config_map.items() if cfg["state"] == "future"}
 
     # ── Live items from roadmap_item ──
     clauses: list[str] = []
@@ -842,7 +905,7 @@ def _query_roadmap_items(
     # Build cycle → objective → items mapping
     raw: dict[str, dict[str, list[dict]]] = {}
     objective_urls: dict[str, str] = {}  # objective_label → Jira URL
-    frozen_cycles_in_view: set[str] = set()
+    cycle_states_in_view: dict[str, str] = {}
 
     for row in rows:
         item = dict(zip(columns, row, strict=False))
@@ -878,7 +941,32 @@ def _query_roadmap_items(
             # Skip frozen cycles here — they'll be populated from freeze data below
             if c in frozen_map:
                 continue
-            raw.setdefault(c, {}).setdefault(objective_label, []).append(item)
+
+            # Future cycle override: force all items to white/Inactive
+            if c in future_cycle_labels:
+                display_item = dict(item)
+                display_item["color_status"] = {
+                    "health": {"color": "white"},
+                    "carry_over": None,
+                }
+                raw.setdefault(c, {}).setdefault(objective_label, []).append(display_item)
+            else:
+                # Recalculate carry-over to only count frozen cycle labels
+                display_item = dict(item)
+                item_cs = display_item.get("color_status") or {}
+                item_cycle_labels = [t for t in tags if CYCLE_RE.match(t)]
+                frozen_count = sum(1 for lbl in item_cycle_labels if lbl in frozen_cycle_labels)
+                if frozen_count > 0:
+                    item_cs = dict(item_cs)
+                    item_cs["carry_over"] = {"color": "purple", "count": frozen_count}
+                else:
+                    item_cs = dict(item_cs)
+                    item_cs["carry_over"] = None
+                display_item["color_status"] = item_cs
+                raw.setdefault(c, {}).setdefault(objective_label, []).append(display_item)
+
+            state = config_map[c]["state"] if c in config_map else None
+            cycle_states_in_view[c] = state
 
     # ── Frozen cycle data ──
     # Determine which frozen cycles to include
@@ -891,9 +979,23 @@ def _query_roadmap_items(
 
     for fc in frozen_to_load:
         frozen_items = _query_frozen_items_for_cycle(fc, department=department, product=product)
-        frozen_cycles_in_view.add(fc)
+        cycle_states_in_view[fc] = config_map[fc]["state"] if fc in config_map else "frozen"
 
         for item in frozen_items:
+            # Recalculate carry-over for frozen items too
+            item_tags = item.get("tags") or []
+            item_cycle_labels = [t for t in item_tags if CYCLE_RE.match(t)]
+            frozen_count = sum(1 for lbl in item_cycle_labels if lbl in frozen_cycle_labels and lbl != fc)
+            item_cs = item.get("color_status") or {}
+            if isinstance(item_cs, str):
+                item_cs = json.loads(item_cs)
+            item_cs = dict(item_cs)
+            if frozen_count > 0:
+                item_cs["carry_over"] = {"color": "purple", "count": frozen_count}
+            else:
+                item_cs["carry_over"] = None
+            item["color_status"] = item_cs
+
             parent_key = item.get("parent_key")
             parent_summary = item.get("parent_summary")
             if parent_key and parent_summary:
@@ -918,7 +1020,7 @@ def _query_roadmap_items(
         )
         grouped[c] = OrderedDict((k, objectives[k]) for k in sorted_keys)
 
-    return grouped, objective_urls, frozen_cycles_in_view
+    return grouped, objective_urls, cycle_states_in_view
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -936,7 +1038,7 @@ def roadmap_page(
     if not product or product not in available_products:
         product = available_products[0] if available_products else None
 
-    grouped_items, objective_urls, frozen_cycles = _query_roadmap_items(
+    grouped_items, objective_urls, cycle_states = _query_roadmap_items(
         department=department, product=product, cycle=cycle,
     )
 
@@ -948,11 +1050,12 @@ def roadmap_page(
             "products": available_products,
             "cycles": options["cycles"],
             "dept_products_json": json.dumps(options["dept_products"]),
+            "cycle_states": options["cycle_states"],
             "selected_department": department or "",
             "selected_product": product or "",
             "selected_cycle": cycle or "",
             "grouped_items": grouped_items,
             "objective_urls": objective_urls,
-            "frozen_cycles": frozen_cycles,
+            "cycle_states_in_view": cycle_states,
         },
     )
