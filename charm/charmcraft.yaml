@@ -68,4 +68,10 @@ config:
         Secret key used to sign the session cookie.
         Must be set to a stable random value for multi-replica deployments.
       type: string
+    sync-interval-seconds:
+      description: |
+        Interval (in seconds) between automatic Jira syncs.
+        Set to 0 to disable the periodic sync entirely.
+      default: 3600
+      type: int
 

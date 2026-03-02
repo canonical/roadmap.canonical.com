@@ -17,3 +17,11 @@ platforms:
 
 extensions:
 - fastapi-framework
+
+services:
+  jira-sync-scheduler:
+    override: replace
+    startup: enabled
+    command: python3 -m src.scheduler
+    working-dir: /app
+    user: _daemon_

@@ -143,6 +143,20 @@ CREATE TABLE IF NOT EXISTS cycle_config (
     updated_by  VARCHAR(256)                           -- email of last person who changed state
 );
 
+-- Scheduler metadata — single-row table tracking the latest sync times.
+-- The scheduler process UPSERTs here so the API can report "time since last sync".
+CREATE TABLE IF NOT EXISTS sync_metadata (
+    id              INTEGER      PRIMARY KEY DEFAULT 1 CHECK (id = 1),  -- exactly one row
+    last_sync_start TIMESTAMPTZ,
+    last_sync_end   TIMESTAMPTZ,
+    last_sync_ok    BOOLEAN,
+    next_sync_at    TIMESTAMPTZ,
+    interval_seconds INTEGER     NOT NULL DEFAULT 3600,
+    error_message   TEXT
+);
+
+INSERT INTO sync_metadata (id) VALUES (1) ON CONFLICT DO NOTHING;
+
 -- Seed a catch-all product so FK never fails
 INSERT INTO product (name, department)
 VALUES ('Uncategorized', 'Unassigned')

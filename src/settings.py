@@ -67,6 +67,14 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("session_secret", "APP_SESSION_SECRET"),
     )
 
+    # ── Periodic sync ────────────────────────────────────────────
+    # Interval (in seconds) between automatic Jira syncs.
+    # Set to 0 to disable the periodic sync entirely.
+    sync_interval_seconds: int = Field(
+        default=3600,
+        validation_alias=AliasChoices("sync_interval_seconds", "APP_SYNC_INTERVAL_SECONDS"),
+    )
+
     model_config = {"env_file": str(_ENV_FILE), "extra": "ignore"}
 
 

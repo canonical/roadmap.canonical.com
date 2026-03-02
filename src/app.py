@@ -32,6 +32,7 @@ from .jira_sync import (
     sync_jira_data,
     take_daily_snapshot,
 )
+from .scheduler import _update_sync_metadata
 from .settings import settings
 
 logger = logging.getLogger(__name__)
@@ -154,6 +155,7 @@ def _run_full_sync() -> None:
     _sync_status["state"] = "syncing"
     _sync_status["last_sync_start"] = datetime.now(UTC).isoformat()
     _sync_status["error"] = None
+    _update_sync_metadata(started=True, error="")
     logger.info("Sync started — Phase 1: fetching from Jira")
     try:
         effective_jql = _build_jql()
@@ -176,10 +178,17 @@ def _run_full_sync() -> None:
 
         _sync_status["state"] = "done"
         logger.info("Sync complete — fetched=%d, processed=%d, snapshot=%d", fetched, processed, snapshot_count)
+        _update_sync_metadata(
+            finished=True, ok=True, interval=settings.sync_interval_seconds,
+        )
     except Exception as exc:
         logger.exception("Sync failed: %s", exc)
         _sync_status["state"] = "failed"
         _sync_status["error"] = str(exc)
+        _update_sync_metadata(
+            finished=True, ok=False, error=str(exc),
+            interval=settings.sync_interval_seconds,
+        )
     finally:
         _sync_status["last_sync_end"] = datetime.now(UTC).isoformat()
 
@@ -279,6 +288,48 @@ async def get_status():
             "database_url": settings.database_url.rsplit("@", 1)[-1],  # hide password
         },
         "db": db_counts,
+    }
+
+
+@app.get("/api/v1/sync/schedule")
+async def get_sync_schedule():
+    """Return scheduler timing info (last sync, next sync, interval).
+
+    This reads from the ``sync_metadata`` table which the scheduler process
+    keeps up-to-date, so it survives process restarts.
+    """
+    try:
+        async with get_async_conn() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT last_sync_start, last_sync_end, last_sync_ok, "
+                    "       next_sync_at, interval_seconds, error_message "
+                    "FROM sync_metadata WHERE id = 1"
+                )
+                row = await cur.fetchone()
+    except Exception:
+        return {"error": "could not query sync_metadata"}
+
+    if row is None:
+        return {"configured": False}
+
+    last_start, last_end, last_ok, next_at, interval, error = row
+    now = datetime.now(UTC)
+
+    return {
+        "configured": True,
+        "last_sync_start": last_start.isoformat() if last_start else None,
+        "last_sync_end": last_end.isoformat() if last_end else None,
+        "last_sync_ok": last_ok,
+        "next_sync_at": next_at.isoformat() if next_at else None,
+        "interval_seconds": interval,
+        "seconds_since_last_sync": (
+            int((now - last_end).total_seconds()) if last_end else None
+        ),
+        "seconds_until_next_sync": (
+            int((next_at - now).total_seconds()) if next_at else None
+        ),
+        "error_message": error,
     }
 
 

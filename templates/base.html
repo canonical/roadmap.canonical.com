@@ -166,6 +166,45 @@
       text-align: center;
       font-size: .875rem;
     }
+    /* ── sync-status indicator ──────────────────────────────────── */
+    .sync-indicator {
+      display: inline-flex;
+      align-items: center;
+      gap: .35rem;
+      cursor: default;
+      position: relative;
+      padding: .25rem .5rem;
+      color: #fff;
+      font-size: .8rem;
+      white-space: nowrap;
+    }
+    .sync-icon {
+      width: 1.8rem;
+      height: 1.8rem;
+      flex-shrink: 0;
+    }
+    .sync-icon--ok    { color: #0e8420; }
+    .sync-icon--stale { color: #e95420; }
+    .sync-icon--none  { color: #999; }
+    .sync-icon--fail  { color: #c7162b; }
+
+    .sync-tooltip {
+      display: none;
+      position: absolute;
+      top: 100%;
+      right: 0;
+      margin-top: .35rem;
+      background: #333;
+      color: #fff;
+      padding: .5rem .75rem;
+      border-radius: .25rem;
+      font-size: .75rem;
+      line-height: 1.5;
+      white-space: nowrap;
+      z-index: 100;
+      box-shadow: 0 2px 6px rgba(0,0,0,.25);
+    }
+    .sync-indicator:hover .sync-tooltip { display: block; }
   </style>
 
   {% block head %}{% endblock %}
@@ -184,6 +223,15 @@
           </a>
         </div>
       </div>
+      <nav class="p-navigation__nav" style="display:flex;align-items:center;justify-content:flex-end;">
+        <span id="sync-indicator" class="sync-indicator" aria-label="Sync status">
+          <svg id="sync-icon" class="sync-icon sync-icon--none" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/>
+          </svg>
+          <span id="sync-label">…</span>
+          <span class="sync-tooltip" id="sync-tooltip">Loading sync info…</span>
+        </span>
+      </nav>
     </div>
   </header>
 
@@ -194,5 +242,75 @@
   </main>
 
   {% block scripts %}{% endblock %}
+
+  <script>
+  /* ── Sync-status indicator ──────────────────────────────────── */
+  (function() {
+    function humanDuration(totalSeconds) {
+      if (totalSeconds == null) return '—';
+      var abs = Math.abs(totalSeconds);
+      if (abs < 120) return Math.round(abs) + ' min';
+      var h = abs / 3600;
+      if (h < 48) return h.toFixed(1) + ' h';
+      return (h / 24).toFixed(1) + ' d';
+    }
+
+    function refreshSync() {
+      fetch('/api/v1/sync/schedule')
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          var icon  = document.getElementById('sync-icon');
+          var label = document.getElementById('sync-label');
+          var tip   = document.getElementById('sync-tooltip');
+
+          if (!d.configured || d.last_sync_end == null) {
+            icon.className = 'sync-icon sync-icon--none';
+            label.textContent = 'No sync yet';
+            tip.textContent   = 'The scheduler has not completed a sync yet.';
+            return;
+          }
+
+          var sinceSec = d.seconds_since_last_sync;
+          var untilSec = d.seconds_until_next_sync;
+          var sinceStr = humanDuration(sinceSec);
+          var untilStr = untilSec != null && untilSec > 0
+                         ? humanDuration(untilSec)
+                         : 'soon';
+
+          if (d.last_sync_ok === false) {
+            icon.className = 'sync-icon sync-icon--fail';
+            label.textContent = 'Sync failed';
+          } else if (sinceSec != null && sinceSec > d.interval_seconds * 2) {
+            icon.className = 'sync-icon sync-icon--stale';
+            label.textContent = sinceStr + ' ago';
+          } else {
+            icon.className = 'sync-icon sync-icon--ok';
+            label.textContent = sinceStr + ' ago';
+          }
+
+          var lines = [];
+          lines.push('Last sync: ' + sinceStr + ' ago');
+          lines.push('Next sync: ' + untilStr);
+          lines.push('Interval: ' + humanDuration(d.interval_seconds));
+          if (d.last_sync_end) {
+            lines.push('Finished: ' + new Date(d.last_sync_end).toLocaleString());
+          }
+          if (d.error_message) {
+            lines.push('Error: ' + d.error_message);
+          }
+          tip.textContent = lines.join('\n');
+          tip.style.whiteSpace = 'pre';
+        })
+        .catch(function() {
+          document.getElementById('sync-icon').className = 'sync-icon sync-icon--none';
+          document.getElementById('sync-label').textContent = '—';
+        });
+    }
+
+    refreshSync();
+    // Refresh every 60 s so the "ago" label stays current
+    setInterval(refreshSync, 60000);
+  })();
+  </script>
 </body>
 </html>

@@ -370,3 +370,47 @@ def test_roadmap_page_filter_by_product(client):
     assert resp.status_code == 200
     assert "F-1" in resp.text
     assert "F-2" not in resp.text
+
+
+# ---------------------------------------------------------------------------
+# Sync schedule endpoint
+# ---------------------------------------------------------------------------
+
+
+def test_sync_schedule_no_sync_yet(client):
+    """Before any sync has run, the endpoint returns configured=True with null timestamps."""
+    resp = client.get("/api/v1/sync/schedule")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["configured"] is True
+    assert body["last_sync_end"] is None
+    assert body["seconds_since_last_sync"] is None
+
+
+def test_sync_schedule_after_sync(client):
+    """After writing sync metadata, the endpoint returns timing info."""
+    from datetime import UTC, datetime, timedelta
+
+    now = datetime.now(UTC)
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE sync_metadata SET "
+                "last_sync_start = %s, last_sync_end = %s, last_sync_ok = true, "
+                "next_sync_at = %s, interval_seconds = 3600, error_message = NULL "
+                "WHERE id = 1",
+                (now - timedelta(minutes=5), now - timedelta(minutes=3), now + timedelta(minutes=57)),
+            )
+        conn.commit()
+
+    resp = client.get("/api/v1/sync/schedule")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["configured"] is True
+    assert body["last_sync_ok"] is True
+    assert body["interval_seconds"] == 3600
+    # "seconds since" should be roughly 180 (3 min), allow some tolerance
+    assert 150 < body["seconds_since_last_sync"] < 300
+    # "seconds until" should be roughly 3420 (57 min)
+    assert 3300 < body["seconds_until_next_sync"] < 3600
+    assert body["error_message"] is None
