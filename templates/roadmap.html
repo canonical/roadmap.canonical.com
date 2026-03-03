@@ -30,7 +30,7 @@
       <label for="cycle">Cycle</label>
       <select name="cycle" id="cycle" class="p-form-validation__input">
         {% for c in cycles %}
-          <option value="{{ c }}" {{ 'selected' if c == selected_cycle }}>{{ c }}</option>
+          <option value="{{ c }}" {{ 'selected' if c == selected_cycle }}>{{ c }}{% if cycle_states.get(c) == 'frozen' %} 🔒{% endif %}</option>
         {% endfor %}
       </select>
     </div>
