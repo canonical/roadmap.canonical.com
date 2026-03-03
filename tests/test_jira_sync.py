@@ -312,7 +312,7 @@ def test_match_first_rule_wins():
 
 
 def test_build_jql_with_projects():
-    """JQL is built from product_jira_source project keys + jql_filter."""
+    """JQL is built from product_jira_source project keys + cycle_config labels + jql_filter."""
     with get_db_connection() as conn, conn.cursor() as cur:
         cur.execute("INSERT INTO product (name, department) VALUES ('P1', 'D1') RETURNING id")
         p1_id = cur.fetchone()[0]
@@ -322,11 +322,14 @@ def test_build_jql_with_projects():
             "INSERT INTO product_jira_source (product_id, jira_project_key) VALUES (%s, 'DPE'), (%s, 'JUJU')",
             (p1_id, p2_id),
         )
+        # Register active cycles
+        cur.execute("INSERT INTO cycle_config (cycle, state) VALUES ('26.04', 'current'), ('26.10', 'future')")
         conn.commit()
 
     jql = _build_jql()
     # Projects are sorted alphabetically
     assert jql.startswith("project in (DPE, JUJU)")
+    assert "labels in (26.04, 26.10)" in jql
     assert "issuetype = Epic" in jql
 
 
@@ -342,6 +345,7 @@ def test_build_jql_deduplicates_projects():
             "INSERT INTO product_jira_source (product_id, jira_project_key) VALUES (%s, 'KU'), (%s, 'KU')",
             (pa_id, pb_id),
         )
+        cur.execute("INSERT INTO cycle_config (cycle, state) VALUES ('26.04', 'current')")
         conn.commit()
 
     jql = _build_jql()
@@ -350,17 +354,55 @@ def test_build_jql_deduplicates_projects():
 
 def test_build_jql_no_projects_raises():
     """_build_jql raises RuntimeError when no project keys are configured."""
+    # Need at least one cycle so we don't hit the cycle check first
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute("INSERT INTO cycle_config (cycle, state) VALUES ('26.04', 'current')")
+        conn.commit()
     with pytest.raises(RuntimeError, match="No Jira project keys found"):
         _build_jql()
 
 
+def test_build_jql_no_cycles_raises():
+    """_build_jql raises RuntimeError when no active cycles are configured."""
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute("INSERT INTO product (name, department) VALUES ('Pz', 'Dz') RETURNING id")
+        pid = cur.fetchone()[0]
+        cur.execute(
+            "INSERT INTO product_jira_source (product_id, jira_project_key) VALUES (%s, 'ZZZ')",
+            (pid,),
+        )
+        conn.commit()
+    with pytest.raises(RuntimeError, match="No active cycles found"):
+        _build_jql()
+
+
+def test_build_jql_excludes_frozen_cycles():
+    """Frozen cycles are NOT included in the labels clause."""
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute("INSERT INTO product (name, department) VALUES ('Pf', 'Df') RETURNING id")
+        pid = cur.fetchone()[0]
+        cur.execute(
+            "INSERT INTO product_jira_source (product_id, jira_project_key) VALUES (%s, 'FRZ')",
+            (pid,),
+        )
+        cur.execute(
+            "INSERT INTO cycle_config (cycle, state) VALUES "
+            "('25.10', 'frozen'), ('26.04', 'current'), ('26.10', 'future')"
+        )
+        conn.commit()
+
+    jql = _build_jql()
+    assert "labels in (26.04, 26.10)" in jql
+    assert "25.10" not in jql
+
+
 def test_build_jql_respects_jql_filter(monkeypatch):
-    """The jql_filter setting is appended to the project clause."""
+    """The jql_filter setting is appended after the project + labels clauses."""
     import src.jira_sync as jira_sync_mod
     import src.settings as settings_mod
     from src.settings import Settings
 
-    monkeypatch.setenv("JQL_FILTER", "issuetype = Epic AND labels in (26.04, 26.10)")
+    monkeypatch.setenv("JQL_FILTER", "issuetype = Epic")
     new_settings = Settings()
     settings_mod.settings = new_settings
     monkeypatch.setattr(jira_sync_mod, "settings", new_settings)
@@ -372,14 +414,15 @@ def test_build_jql_respects_jql_filter(monkeypatch):
             "INSERT INTO product_jira_source (product_id, jira_project_key) VALUES (%s, 'ABC')",
             (pid,),
         )
+        cur.execute("INSERT INTO cycle_config (cycle, state) VALUES ('26.04', 'current'), ('26.10', 'future')")
         conn.commit()
 
     jql = _build_jql()
-    assert jql == "project in (ABC) AND issuetype = Epic AND labels in (26.04, 26.10)"
+    assert jql == "project in (ABC) AND labels in (26.04, 26.10) AND issuetype = Epic"
 
 
 def test_build_jql_empty_filter(monkeypatch):
-    """When jql_filter is empty, only the project clause is returned."""
+    """When jql_filter is empty, only the project + labels clauses are returned."""
     import src.jira_sync as jira_sync_mod
     import src.settings as settings_mod
     from src.settings import Settings
@@ -396,7 +439,8 @@ def test_build_jql_empty_filter(monkeypatch):
             "INSERT INTO product_jira_source (product_id, jira_project_key) VALUES (%s, 'XYZ')",
             (pid,),
         )
+        cur.execute("INSERT INTO cycle_config (cycle, state) VALUES ('26.04', 'current')")
         conn.commit()
 
     jql = _build_jql()
-    assert jql == "project in (XYZ)"
+    assert jql == "project in (XYZ) AND labels in (26.04)"

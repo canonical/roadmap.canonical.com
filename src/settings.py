@@ -37,7 +37,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("jira_pat", "APP_JIRA_PAT"),
     )
     jql_filter: str = Field(
-        default='issuetype = Epic AND labels in (26.04, 26.10) AND "Properties[Checkboxes]" = "Roadmap Item"',
+        default='issuetype = Epic AND "Properties[Checkboxes]" = "Roadmap Item"',
         validation_alias=AliasChoices("jql_filter", "APP_JQL_FILTER"),
     )
 
