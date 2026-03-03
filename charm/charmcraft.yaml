@@ -42,7 +42,9 @@ config:
       type: string
     jql-filter:
       description: |
-        The JQL filter used to query Jira issues.
+        Additional JQL filter appended to the dynamically built query.
+        Cycle labels are derived automatically from registered cycles
+        in the database — do NOT include "labels in (...)" here.
       default: "issuetype = Epic"
       type: string
     oidc-client-id:

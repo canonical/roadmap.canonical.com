@@ -32,17 +32,25 @@ logger = logging.getLogger(__name__)
 
 
 def _build_jql() -> str:
-    """Build the JQL query dynamically from product_jira_source projects.
+    """Build the JQL query dynamically from DB-managed projects and cycles.
 
-    Reads all distinct ``jira_project_key`` values from the ``product_jira_source``
-    table and combines them with the configured ``jql_filter`` setting.
+    1. Reads distinct ``jira_project_key`` values from ``product_jira_source``.
+    2. Reads non-frozen cycle labels from ``cycle_config`` (states ``current``
+       and ``future``) to build the ``labels in (...)`` clause.
+    3. Appends the static ``jql_filter`` setting (e.g. ``issuetype = Epic``).
 
-    Returns a JQL string like:
-        ``project in (JUJU, KU, DPE) AND issuetype = Epic AND labels in (26.04, 26.10)``
+    Returns a JQL string like::
+
+        project in (JUJU, KU, DPE) AND labels in (26.04, 26.10) AND issuetype = Epic
     """
     with get_db_connection() as conn, conn.cursor() as cur:
         cur.execute("SELECT DISTINCT jira_project_key FROM product_jira_source ORDER BY jira_project_key")
         project_keys = [row[0] for row in cur.fetchall()]
+
+        cur.execute(
+            "SELECT cycle FROM cycle_config WHERE state IN ('current', 'future') ORDER BY cycle"
+        )
+        cycle_labels = [row[0] for row in cur.fetchall()]
 
     if not project_keys:
         raise RuntimeError(
@@ -50,8 +58,14 @@ def _build_jql() -> str:
             "Add at least one product_jira_source row before syncing."
         )
 
-    projects_clause = "project in ({})".format(", ".join(project_keys))
-    jql = projects_clause
+    if not cycle_labels:
+        raise RuntimeError(
+            "No active cycles found in cycle_config (state = current or future). "
+            "Register at least one cycle before syncing."
+        )
+
+    jql = "project in ({})".format(", ".join(project_keys))
+    jql += " AND labels in ({})".format(", ".join(cycle_labels))
     if settings.jql_filter:
         jql += f" AND {settings.jql_filter}"
 
