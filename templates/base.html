@@ -270,8 +270,16 @@
             return;
           }
 
-          var sinceSec = d.seconds_since_last_sync;
-          var untilSec = d.seconds_until_next_sync;
+          // Compute durations client-side from ISO timestamps so the
+          // display is always relative to the *browser* clock and immune
+          // to server ↔ client clock skew.
+          var nowMs   = Date.now();
+          var sinceSec = d.last_sync_end
+                         ? Math.round((nowMs - new Date(d.last_sync_end).getTime()) / 1000)
+                         : null;
+          var untilSec = d.next_sync_at
+                         ? Math.round((new Date(d.next_sync_at).getTime() - nowMs) / 1000)
+                         : null;
           var sinceStr = humanDuration(sinceSec);
           var untilStr = untilSec != null && untilSec > 0
                          ? humanDuration(untilSec)
