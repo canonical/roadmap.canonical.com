@@ -7,3 +7,5 @@ jobs:
   integration-tests:
     uses: canonical/operator-workflows/.github/workflows/integration_test.yaml@main
     secrets: inherit
+    with:
+      juju-channel: 3.6/stable
