@@ -116,7 +116,25 @@ class OIDCAuthMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-app = FastAPI(title="Roadmap API", version="0.1.0", lifespan=lifespan)
+_OPENAPI_TAGS = [
+    {"name": "Sync", "description": "Jira sync trigger and status"},
+    {"name": "Roadmap", "description": "Roadmap items (JSON)"},
+    {"name": "Products", "description": "Product and Jira-source mapping CRUD"},
+    {"name": "Snapshots", "description": "Daily snapshots and change-tracking diffs"},
+    {"name": "Cycles", "description": "Cycle lifecycle management (frozen / current / future)"},
+    {"name": "Auth", "description": "OIDC authentication flow"},
+]
+
+app = FastAPI(
+    title="Roadmap API",
+    version="0.1.0",
+    description=(
+        "Company-wide roadmap visualisation tool.  "
+        "Data flows from Jira → PostgreSQL → this API → server-rendered UI."
+    ),
+    lifespan=lifespan,
+    openapi_tags=_OPENAPI_TAGS,
+)
 
 # Middleware order: add_middleware uses a stack, so the LAST added is the
 # OUTERMOST (runs first).  We need: CORS → Session → OIDCAuth (innermost).
@@ -197,7 +215,7 @@ def _run_full_sync() -> None:
 # Authentication endpoints
 # ---------------------------------------------------------------------------
 
-@app.get("/login")
+@app.get("/login", tags=["Auth"])
 async def login(request: Request):
     """Redirect to the OIDC provider for login."""
     if not settings.oidc_client_id:
@@ -205,13 +223,13 @@ async def login(request: Request):
     return await login_redirect(request)
 
 
-@app.get("/callback")
+@app.get("/callback", tags=["Auth"])
 async def callback(request: Request):
     """Handle the OIDC callback (authorization code exchange)."""
     return await handle_callback(request)
 
 
-@app.get("/token", response_class=HTMLResponse)
+@app.get("/token", response_class=HTMLResponse, tags=["Auth"])
 async def token_page(request: Request):
     """Show the session cookie as a ready-to-copy curl command."""
     cookie_value = request.cookies.get("roadmap_session", "")
@@ -243,7 +261,7 @@ curl -b 'roadmap_session={cookie_value}' {base_url}/api/v1/status</code></pre>
 # Endpoints
 # ---------------------------------------------------------------------------
 
-@app.post("/api/v1/sync")
+@app.post("/api/v1/sync", tags=["Sync"])
 def trigger_sync(background_tasks: BackgroundTasks):
     """Kick off a background Jira sync."""
     if _sync_status["state"] in ("syncing", "processing"):
@@ -252,7 +270,7 @@ def trigger_sync(background_tasks: BackgroundTasks):
     return {"message": "Sync started"}
 
 
-@app.get("/api/v1/status")
+@app.get("/api/v1/status", tags=["Sync"])
 async def get_status():
     """Return current sync status enriched with DB row counts and active config."""
     db_counts = {}
@@ -291,7 +309,7 @@ async def get_status():
     }
 
 
-@app.get("/api/v1/sync/schedule")
+@app.get("/api/v1/sync/schedule", tags=["Sync"])
 async def get_sync_schedule():
     """Return scheduler timing info (last sync, next sync, interval).
 
@@ -338,7 +356,7 @@ async def get_sync_schedule():
 # ---------------------------------------------------------------------------
 
 
-@app.get("/api/v1/snapshots")
+@app.get("/api/v1/snapshots", tags=["Snapshots"])
 async def list_snapshots():
     """List all available snapshot dates (newest first)."""
     async with get_async_conn() as conn:
@@ -354,7 +372,7 @@ async def list_snapshots():
     }
 
 
-@app.get("/api/v1/snapshots/diff")
+@app.get("/api/v1/snapshots/diff", tags=["Snapshots"])
 async def snapshot_diff(
     from_date: str = Query(..., description="Start date (YYYY-MM-DD)"),
     to_date: str = Query(..., description="End date (YYYY-MM-DD)"),
@@ -465,7 +483,7 @@ class CycleStateIn(BaseModel):
     state: str
 
 
-@app.get("/api/v1/cycles")
+@app.get("/api/v1/cycles", tags=["Cycles"])
 async def list_cycles():
     """List all known cycles with their state and metadata."""
     configs = get_cycle_configs()
@@ -507,7 +525,7 @@ async def list_cycles():
     return {"data": data, "meta": {"total": len(data)}}
 
 
-@app.post("/api/v1/cycles/{cycle}", status_code=201)
+@app.post("/api/v1/cycles/{cycle}", status_code=201, tags=["Cycles"])
 async def register_cycle_endpoint(cycle: str, body: CycleRegisterIn | None = None, request: Request = None):
     """Register a new cycle with an initial state."""
     updated_by = None
@@ -526,7 +544,7 @@ async def register_cycle_endpoint(cycle: str, body: CycleRegisterIn | None = Non
     return {"message": f"Cycle {cycle} registered as {state}", **result}
 
 
-@app.put("/api/v1/cycles/{cycle}")
+@app.put("/api/v1/cycles/{cycle}", tags=["Cycles"])
 async def set_cycle_state_endpoint(cycle: str, body: CycleStateIn, request: Request = None):
     """Change a registered cycle's state.
 
@@ -549,7 +567,7 @@ async def set_cycle_state_endpoint(cycle: str, body: CycleStateIn, request: Requ
     return {"message": f"Cycle {cycle} state set to {body.state}", **result}
 
 
-@app.delete("/api/v1/cycles/{cycle}", status_code=200)
+@app.delete("/api/v1/cycles/{cycle}", status_code=200, tags=["Cycles"])
 async def remove_cycle_endpoint(cycle: str):
     """Remove a cycle from the registry (also deletes freeze data if frozen)."""
     try:
@@ -560,7 +578,7 @@ async def remove_cycle_endpoint(cycle: str):
     return {"message": f"Cycle {cycle} removed"}
 
 
-@app.get("/api/v1/cycles/{cycle}/items")
+@app.get("/api/v1/cycles/{cycle}/items", tags=["Cycles"])
 async def get_frozen_cycle_items(cycle: str):
     """Return the frozen items for a specific cycle."""
     frozen = get_frozen_cycles()
@@ -586,7 +604,7 @@ async def get_frozen_cycle_items(cycle: str):
     }
 
 
-@app.get("/api/v1/roadmap")
+@app.get("/api/v1/roadmap", tags=["Roadmap"])
 async def get_roadmap(
     product: str | None = Query(None),
     status: str | None = Query(None),
@@ -700,7 +718,7 @@ async def _fetch_product_with_sources(cur, product_id: int) -> dict | None:
     return product
 
 
-@app.get("/api/v1/products")
+@app.get("/api/v1/products", tags=["Products"])
 async def list_products():
     """List all products with their Jira source mappings."""
     async with get_async_conn() as conn:
@@ -711,7 +729,7 @@ async def list_products():
     return {"data": products, "meta": {"total": len(products)}}
 
 
-@app.get("/api/v1/products/{product_id}")
+@app.get("/api/v1/products/{product_id}", tags=["Products"])
 async def get_product(product_id: int):
     """Get a single product by ID."""
     async with get_async_conn() as conn:
@@ -722,7 +740,7 @@ async def get_product(product_id: int):
     return {"data": product}
 
 
-@app.post("/api/v1/products", status_code=201)
+@app.post("/api/v1/products", status_code=201, tags=["Products"])
 async def create_product(body: ProductIn):
     """Create a product with optional Jira source mappings."""
     async with get_async_conn() as conn:
@@ -757,7 +775,7 @@ async def create_product(body: ProductIn):
     return {"data": product}
 
 
-@app.put("/api/v1/products/{product_id}")
+@app.put("/api/v1/products/{product_id}", tags=["Products"])
 async def update_product(product_id: int, body: ProductIn):
     """Replace a product's details and Jira source mappings entirely."""
     async with get_async_conn() as conn:
@@ -797,7 +815,7 @@ async def update_product(product_id: int, body: ProductIn):
     return {"data": product}
 
 
-@app.delete("/api/v1/products/{product_id}", status_code=204)
+@app.delete("/api/v1/products/{product_id}", status_code=204, tags=["Products"])
 async def delete_product(product_id: int):
     """Delete a product and its Jira source mappings.
 
