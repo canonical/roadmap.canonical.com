@@ -256,6 +256,8 @@ def trigger_sync(background_tasks: BackgroundTasks):
 async def get_status():
     """Return current sync status enriched with DB row counts and active config."""
     db_counts = {}
+    db_error_message = None
+    db_last_sync_ok = None
     try:
         async with get_async_conn() as conn:
             async with conn.cursor() as cur:
@@ -271,6 +273,14 @@ async def get_status():
                 db_counts["snapshot_dates"] = (await cur.fetchone())[0]
                 await cur.execute("SELECT count(*) FROM roadmap_snapshot")
                 db_counts["snapshot_rows"] = (await cur.fetchone())[0]
+                # Also read persisted error from sync_metadata (written by scheduler)
+                await cur.execute(
+                    "SELECT error_message, last_sync_ok FROM sync_metadata WHERE id = 1"
+                )
+                meta_row = await cur.fetchone()
+                if meta_row:
+                    db_error_message = meta_row[0]
+                    db_last_sync_ok = meta_row[1]
     except Exception:
         db_counts["error"] = "could not query database"
 
@@ -279,8 +289,20 @@ async def get_status():
     except (RuntimeError, Exception):
         effective_jql = "(no projects configured)"
 
+    # Merge in-memory status with persisted error from sync_metadata.
+    # The scheduler runs in a separate process, so the in-memory _sync_status
+    # may still show "idle" / error=None even after a failed scheduler sync.
+    error = _sync_status.get("error")
+    state = _sync_status.get("state", "idle")
+    if not error and db_error_message:
+        error = db_error_message
+    if state == "idle" and db_last_sync_ok is False:
+        state = "failed"
+
     return {
         **_sync_status,
+        "state": state,
+        "error": error,
         "config": {
             "jira_url": settings.jira_url,
             "jql_filter": settings.jql_filter,
