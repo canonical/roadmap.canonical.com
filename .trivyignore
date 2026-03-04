@@ -1,0 +1,4 @@
+# Go stdlib CVE in rock base image (not owned by us)
+# crypto/tls: Unexpected session resumption in crypto/tls
+# https://avd.aquasec.com/nvd/cve-2025-68121
+CVE-2025-68121
