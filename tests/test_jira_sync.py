@@ -327,8 +327,8 @@ def test_build_jql_with_projects():
         conn.commit()
 
     jql = _build_jql()
-    # Projects are sorted alphabetically
-    assert jql.startswith("project in (DPE, JUJU)")
+    # Projects are sorted alphabetically and quoted (to handle JQL reserved words)
+    assert jql.startswith('project in ("DPE", "JUJU")')
     assert "labels in (26.04, 26.10)" in jql
     assert "issuetype = Epic" in jql
 
@@ -349,7 +349,7 @@ def test_build_jql_deduplicates_projects():
         conn.commit()
 
     jql = _build_jql()
-    assert jql.startswith("project in (KU)")
+    assert jql.startswith('project in ("KU")')
 
 
 def test_build_jql_no_projects_raises():
@@ -418,7 +418,7 @@ def test_build_jql_respects_jql_filter(monkeypatch):
         conn.commit()
 
     jql = _build_jql()
-    assert jql == "project in (ABC) AND labels in (26.04, 26.10) AND issuetype = Epic"
+    assert jql == 'project in ("ABC") AND labels in (26.04, 26.10) AND issuetype = Epic'
 
 
 def test_build_jql_empty_filter(monkeypatch):
@@ -443,4 +443,4 @@ def test_build_jql_empty_filter(monkeypatch):
         conn.commit()
 
     jql = _build_jql()
-    assert jql == "project in (XYZ) AND labels in (26.04)"
+    assert jql == 'project in ("XYZ") AND labels in (26.04)'

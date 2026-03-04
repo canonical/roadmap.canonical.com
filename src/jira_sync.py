@@ -64,7 +64,7 @@ def _build_jql() -> str:
             "Register at least one cycle before syncing."
         )
 
-    jql = "project in ({})".format(", ".join(project_keys))
+    jql = "project in ({})".format(", ".join(f'"{k}"' for k in project_keys))
     jql += " AND labels in ({})".format(", ".join(cycle_labels))
     if settings.jql_filter:
         jql += f" AND {settings.jql_filter}"
