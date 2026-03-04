@@ -12,3 +12,4 @@ jobs:
       use-canonical-k8s: true
       provider: 'k8s'
       channel: '1.32-classic/stable'
+      upload-image: artifact
