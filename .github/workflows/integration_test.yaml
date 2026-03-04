@@ -10,3 +10,5 @@ jobs:
     with:
       juju-channel: 3.6/stable
       use-canonical-k8s: true
+      provider: 'k8s'
+      channel: '1.32-classic/stable'
