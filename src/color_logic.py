@@ -15,6 +15,7 @@ CYCLE_RE = re.compile(r"^\d{2}\.\d{2}$")
 def calculate_epic_color(
     issue_fields: dict[str, Any],
     frozen_cycles: set[str] | None = None,
+    current_cycle: str | None = None,
 ) -> dict[str, Any]:
     """Derive color_status from raw Jira issue fields.
 
@@ -26,11 +27,16 @@ def calculate_epic_color(
 
     Args:
         issue_fields: Raw Jira issue ``fields`` dict.
-        frozen_cycles: Optional set of frozen cycle labels.  When provided,
-            carry-over counts only the frozen cycle labels on the item
-            (i.e. only past/closed cycles count towards carry-over).
-            When ``None`` (the default — used during sync), carry-over
-            counts all XX.XX cycle labels (backwards-compatible).
+        frozen_cycles: Optional set of frozen cycle labels.  When provided
+            *without* ``current_cycle``, carry-over counts the frozen cycle
+            labels on the item (i.e. only past/closed cycles count towards
+            carry-over).  When ``None`` (the default — used during sync),
+            carry-over counts all XX.XX cycle labels minus one
+            (backwards-compatible).
+        current_cycle: The cycle label the item is being displayed under.
+            When provided, carry-over counts the cycle labels that are
+            chronologically **before** ``current_cycle`` (lexicographic
+            comparison on the ``YY.MM`` format).
 
     Rules:
         - Multiple *cycle* labels (XX.XX pattern) → carry-over (purple badge).
@@ -53,13 +59,18 @@ def calculate_epic_color(
     # --- carry-over ----------------------------------------------------------
     cycle_labels = [lbl for lbl in labels if CYCLE_RE.match(lbl)]
     carry_over = None
-    if frozen_cycles is not None:
+    if current_cycle is not None:
+        # Count cycle labels that are chronologically before the displayed cycle
+        prior_count = sum(1 for lbl in cycle_labels if lbl < current_cycle)
+        if prior_count > 0:
+            carry_over = {"color": "purple", "count": prior_count}
+    elif frozen_cycles is not None:
         # Only count frozen (past) cycle labels as carry-over
         frozen_count = sum(1 for lbl in cycle_labels if lbl in frozen_cycles)
         if frozen_count > 0:
             carry_over = {"color": "purple", "count": frozen_count}
     else:
-        # Legacy behaviour: count all cycle labels (used during sync pipeline)
+        # Legacy behaviour: count all cycle labels minus one (used during sync pipeline)
         if len(cycle_labels) > 1:
             carry_over = {"color": "purple", "count": len(cycle_labels) - 1}
 
