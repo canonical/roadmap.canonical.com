@@ -141,3 +141,60 @@ def test_emoji_dropped_state():
     }
     result = calculate_epic_color(fields)
     assert result["health"]["color"] == "black"
+
+
+# ---------------------------------------------------------------------------
+# carry-over with current_cycle (chronological / prior-cycle counting)
+# ---------------------------------------------------------------------------
+
+
+def test_carry_over_current_cycle_three_labels():
+    """Labels 25.04, 25.10, 26.04 viewed in 26.04 → carry-over count 2."""
+    fields = {"status": {"name": "In Progress"}, "labels": ["25.04", "25.10", "26.04"]}
+    result = calculate_epic_color(fields, current_cycle="26.04")
+    assert result["carry_over"] == {"color": "purple", "count": 2}
+
+
+def test_carry_over_current_cycle_two_labels():
+    """Labels 25.10, 26.04 viewed in 26.04 → carry-over count 1."""
+    fields = {"status": {"name": "In Progress"}, "labels": ["25.10", "26.04"]}
+    result = calculate_epic_color(fields, current_cycle="26.04")
+    assert result["carry_over"] == {"color": "purple", "count": 1}
+
+
+def test_carry_over_current_cycle_single_label():
+    """Single label 26.04 viewed in 26.04 → no carry-over."""
+    fields = {"status": {"name": "In Progress"}, "labels": ["26.04"]}
+    result = calculate_epic_color(fields, current_cycle="26.04")
+    assert result["carry_over"] is None
+
+
+def test_carry_over_current_cycle_four_labels():
+    """Labels 25.04, 25.10, 26.04, 26.10 viewed across different cycles."""
+    fields = {"status": {"name": "In Progress"}, "labels": ["25.04", "25.10", "26.04", "26.10"]}
+
+    # Viewed in 25.10 → 1 prior cycle (25.04)
+    result = calculate_epic_color(fields, current_cycle="25.10")
+    assert result["carry_over"] == {"color": "purple", "count": 1}
+
+    # Viewed in 26.04 → 2 prior cycles (25.04, 25.10)
+    result = calculate_epic_color(fields, current_cycle="26.04")
+    assert result["carry_over"] == {"color": "purple", "count": 2}
+
+    # Viewed in 26.10 → 3 prior cycles (25.04, 25.10, 26.04)
+    result = calculate_epic_color(fields, current_cycle="26.10")
+    assert result["carry_over"] == {"color": "purple", "count": 3}
+
+
+def test_carry_over_current_cycle_first_appearance():
+    """Viewing the earliest cycle label → no carry-over."""
+    fields = {"status": {"name": "In Progress"}, "labels": ["25.04", "25.10", "26.04"]}
+    result = calculate_epic_color(fields, current_cycle="25.04")
+    assert result["carry_over"] is None
+
+
+def test_carry_over_current_cycle_ignores_non_cycle_labels():
+    """Non-cycle labels don't affect carry-over count with current_cycle."""
+    fields = {"status": {"name": "In Progress"}, "labels": ["25.04", "26.04", "ComponentPlatform", "Major"]}
+    result = calculate_epic_color(fields, current_cycle="26.04")
+    assert result["carry_over"] == {"color": "purple", "count": 1}
