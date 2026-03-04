@@ -1149,6 +1149,12 @@ async def roadmap_page(
     if not product or product not in available_products:
         product = available_products[0] if available_products else None
 
+    # Default to the current cycle when none is selected
+    if not cycle:
+        current = [c for c, s in options["cycle_states"].items() if s == "current"]
+        if current:
+            cycle = current[0]
+
     grouped_items, objective_urls, cycle_states = await _query_roadmap_items(
         department=department, product=product, cycle=cycle,
     )
