@@ -973,7 +973,7 @@ async def _query_roadmap_items(
     - An item with multiple cycle labels appears in each bucket.
     - **Frozen cycles** are served from ``cycle_freeze_item`` instead of live data.
     - **Future cycles** have all item colors overridden to white/Inactive.
-    - **Carry-over** counts only frozen cycle labels on an item.
+    - **Carry-over** counts cycle labels chronologically before the displayed cycle.
 
     Returns:
         A tuple of (grouped_items, objective_urls, cycle_states_in_view).
@@ -983,7 +983,6 @@ async def _query_roadmap_items(
     config_map = get_cycle_configs()  # {cycle: {state, updated_at, updated_by}}
 
     # Determine which cycles are in which state
-    frozen_cycle_labels = {c for c, cfg in config_map.items() if cfg["state"] == "frozen"}
     future_cycle_labels = {c for c, cfg in config_map.items() if cfg["state"] == "future"}
 
     # ── Live items from roadmap_item ──
@@ -1062,14 +1061,14 @@ async def _query_roadmap_items(
                 }
                 raw.setdefault(c, {}).setdefault(objective_label, []).append(display_item)
             else:
-                # Recalculate carry-over to only count frozen cycle labels
+                # Carry-over = number of cycle labels chronologically before this cycle
                 display_item = dict(item)
                 item_cs = display_item.get("color_status") or {}
                 item_cycle_labels = [t for t in tags if CYCLE_RE.match(t)]
-                frozen_count = sum(1 for lbl in item_cycle_labels if lbl in frozen_cycle_labels)
-                if frozen_count > 0:
+                prior_count = sum(1 for lbl in item_cycle_labels if lbl < c)
+                if prior_count > 0:
                     item_cs = dict(item_cs)
-                    item_cs["carry_over"] = {"color": "purple", "count": frozen_count}
+                    item_cs["carry_over"] = {"color": "purple", "count": prior_count}
                 else:
                     item_cs = dict(item_cs)
                     item_cs["carry_over"] = None
@@ -1093,16 +1092,16 @@ async def _query_roadmap_items(
         cycle_states_in_view[fc] = config_map[fc]["state"] if fc in config_map else "frozen"
 
         for item in frozen_items:
-            # Recalculate carry-over for frozen items too
+            # Carry-over = number of cycle labels chronologically before this frozen cycle
             item_tags = item.get("tags") or []
             item_cycle_labels = [t for t in item_tags if CYCLE_RE.match(t)]
-            frozen_count = sum(1 for lbl in item_cycle_labels if lbl in frozen_cycle_labels and lbl != fc)
+            prior_count = sum(1 for lbl in item_cycle_labels if lbl < fc)
             item_cs = item.get("color_status") or {}
             if isinstance(item_cs, str):
                 item_cs = json.loads(item_cs)
             item_cs = dict(item_cs)
-            if frozen_count > 0:
-                item_cs["carry_over"] = {"color": "purple", "count": frozen_count}
+            if prior_count > 0:
+                item_cs["carry_over"] = {"color": "purple", "count": prior_count}
             else:
                 item_cs["carry_over"] = None
             item["color_status"] = item_cs
