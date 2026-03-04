@@ -8,5 +8,5 @@ jobs:
     uses: canonical/operator-workflows/.github/workflows/integration_test.yaml@main
     secrets: inherit
     with:
-      channel: 1.28-strict/stable
       juju-channel: 3.6/stable
+      use-canonical-k8s: true
