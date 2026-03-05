@@ -234,11 +234,12 @@ def test_roadmap_page_with_data(client):
             )
         conn.commit()
 
-    resp = client.get("/")
+    resp = client.get("/", params={"cycle": "25.10"})
     assert resp.status_code == 200
     assert "HTML-1" in resp.text
     assert "Render test" in resp.text
-    assert "Cycle 25.10" in resp.text
+    # Cycle appears in the filter dropdown (no longer as a heading)
+    assert "25.10" in resp.text
     assert "No objective" in resp.text
 
 
@@ -293,7 +294,7 @@ def test_roadmap_page_hides_items_without_cycle(client):
 
 
 def test_roadmap_page_item_in_multiple_cycles(client):
-    """An item with two cycle labels appears under both cycle headings."""
+    """An item with two cycle labels appears in cycle filter dropdown options."""
     color = Jsonb({"health": {"color": "green"}, "carry_over": {"color": "purple", "count": 1}})
     uncat_id = _get_uncategorized_id()
     with get_db_connection() as conn:
@@ -310,12 +311,14 @@ def test_roadmap_page_item_in_multiple_cycles(client):
             )
         conn.commit()
 
-    resp = client.get("/")
+    # Both cycles should be available in the filter dropdown
+    resp = client.get("/", params={"cycle": "25.10"})
     assert resp.status_code == 200
-    assert "Cycle 26.04" in resp.text
-    assert "Cycle 25.10" in resp.text
-    # The item should appear twice (once per cycle)
-    assert resp.text.count("MULTI-1") >= 2
+    assert "MULTI-1" in resp.text
+
+    resp = client.get("/", params={"cycle": "26.04"})
+    assert resp.status_code == 200
+    assert "MULTI-1" in resp.text
 
 
 def test_roadmap_page_filter_by_cycle(client):
@@ -339,8 +342,8 @@ def test_roadmap_page_filter_by_cycle(client):
     assert resp.status_code == 200
     assert "CY-2" in resp.text
     assert "CY-1" not in resp.text
-    assert "Cycle 26.04" in resp.text
-    assert "Cycle 25.10" not in resp.text
+    # Cycle value appears in the filter dropdown
+    assert "26.04" in resp.text
 
 
 def test_roadmap_page_filter_by_product(client):

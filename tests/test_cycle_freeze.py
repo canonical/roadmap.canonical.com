@@ -547,14 +547,14 @@ def test_roadmap_page_frozen_cycle_shows_frozen_data(client):
 
 
 def test_roadmap_page_frozen_badge(client):
-    """Frozen cycles show a 🔒 Frozen badge on the page."""
+    """Frozen cycles show a 🔒 indicator in the cycle filter dropdown."""
     pid = _insert_product("P")
     _insert_roadmap_item("FB-1", "Item", "Open", "green", pid, tags=["25.10"])
     register_cycle("25.10", state="frozen")
 
     resp = client.get("/", params={"product": "P", "cycle": "25.10"})
     assert resp.status_code == 200
-    assert "Frozen" in resp.text
+    # The cycle dropdown shows 🔒 next to frozen cycles
     assert "🔒" in resp.text
 
 
@@ -570,33 +570,30 @@ def test_roadmap_page_future_cycle_shows_inactive(client):
     resp = client.get("/", params={"product": "FutureProd", "cycle": "27.04"})
     assert resp.status_code == 200
     assert "Future item" in resp.text
-    assert "🔮" in resp.text
-    assert "Future" in resp.text
     # Item should be rendered as white/Inactive (check for the color-cell--white class)
     assert "color-cell--white" in resp.text
 
 
 def test_roadmap_page_future_badge(client):
-    """Future cycles display a 🔮 Future badge in the heading."""
+    """Future cycles are selectable in the cycle filter."""
     pid = _insert_product("P")
     _insert_roadmap_item("FBadge-1", "Item", "Open", "green", pid, tags=["27.04"])
     register_cycle("27.04", state="future")
 
     resp = client.get("/", params={"product": "P", "cycle": "27.04"})
     assert resp.status_code == 200
-    assert "🔮" in resp.text
+    assert "FBadge-1" in resp.text
 
 
 def test_roadmap_page_current_badge(client):
-    """Current cycle shows ▶ Current badge."""
+    """Current cycle items are displayed when selected."""
     pid = _insert_product("P")
     _insert_roadmap_item("CB-1", "Item", "In Progress", "green", pid, tags=["26.04"])
     register_cycle("26.04", state="current")
 
     resp = client.get("/", params={"product": "P", "cycle": "26.04"})
     assert resp.status_code == 200
-    assert "Current" in resp.text
-    assert "▶" in resp.text
+    assert "CB-1" in resp.text
 
 
 def test_roadmap_page_unfrozen_cycle_shows_live_data(client):
