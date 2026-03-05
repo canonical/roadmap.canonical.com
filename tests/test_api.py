@@ -398,6 +398,190 @@ def test_sync_schedule_no_sync_yet(client):
     assert body["seconds_since_last_sync"] is None
 
 
+def test_roadmap_page_objective_and_epic_ordering(client):
+    """Objectives are ordered by parent_rank, epics within each objective by rank."""
+    from psycopg.types.json import Jsonb as _Jsonb
+
+    from src.jira_sync import register_cycle
+
+    register_cycle("26.04", state="current")
+
+    color = _Jsonb({"health": {"color": "green"}, "carry_over": None})
+    pid = _get_uncategorized_id()
+    with get_db_connection() as conn, conn.cursor() as cur:
+        # Objective B has a HIGHER parent_rank → should appear SECOND
+        cur.execute(
+            "INSERT INTO roadmap_item "
+            "  (jira_key, title, status, tags, product_id, color_status, url, "
+            "   parent_key, parent_summary, rank, parent_rank) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (
+                "E-1",
+                "Epic B1",
+                "Open",
+                ["26.04"],
+                pid,
+                color,
+                "http://j/E-1",
+                "OBJ-B",
+                "Objective B",
+                "1|hzz:",
+                "1|hzolnr:",
+            ),
+        )
+        cur.execute(
+            "INSERT INTO roadmap_item "
+            "  (jira_key, title, status, tags, product_id, color_status, url, "
+            "   parent_key, parent_summary, rank, parent_rank) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (
+                "E-2",
+                "Epic B2",
+                "Open",
+                ["26.04"],
+                pid,
+                color,
+                "http://j/E-2",
+                "OBJ-B",
+                "Objective B",
+                "1|hza:",
+                "1|hzolnr:",
+            ),
+        )
+        # Objective A has a LOWER parent_rank → should appear FIRST
+        cur.execute(
+            "INSERT INTO roadmap_item "
+            "  (jira_key, title, status, tags, product_id, color_status, url, "
+            "   parent_key, parent_summary, rank, parent_rank) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (
+                "E-3",
+                "Epic A1",
+                "Open",
+                ["26.04"],
+                pid,
+                color,
+                "http://j/E-3",
+                "OBJ-A",
+                "Objective A",
+                "1|hab:",
+                "1|hzolnb:",
+            ),
+        )
+        cur.execute(
+            "INSERT INTO roadmap_item "
+            "  (jira_key, title, status, tags, product_id, color_status, url, "
+            "   parent_key, parent_summary, rank, parent_rank) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (
+                "E-4",
+                "Epic A2",
+                "Open",
+                ["26.04"],
+                pid,
+                color,
+                "http://j/E-4",
+                "OBJ-A",
+                "Objective A",
+                "1|hzz:",
+                "1|hzolnb:",
+            ),
+        )
+        conn.commit()
+
+    resp = client.get("/", params={"product": "Uncategorized", "cycle": "26.04"})
+    assert resp.status_code == 200
+    html = resp.text
+
+    # Objective A (parent_rank "1|hzolnb:") must appear before Objective B ("1|hzolnr:")
+    pos_a = html.index("Objective A")
+    pos_b = html.index("Objective B")
+    assert pos_a < pos_b, (
+        f"Objective A (parent_rank 1|hzolnb:) should appear before "
+        f"Objective B (parent_rank 1|hzolnr:) but positions were {pos_a} vs {pos_b}"
+    )
+
+    # Within Objective A: Epic A1 (rank "1|hab:") before Epic A2 (rank "1|hzz:")
+    pos_a1 = html.index("Epic A1")
+    pos_a2 = html.index("Epic A2")
+    assert pos_a1 < pos_a2, (
+        f"Epic A1 (rank 1|hab:) should appear before Epic A2 (rank 1|hzz:) "
+        f"within Objective A, but positions were {pos_a1} vs {pos_a2}"
+    )
+
+    # Within Objective B: Epic B2 (rank "1|hza:") before Epic B1 (rank "1|hzz:")
+    pos_b2 = html.index("Epic B2")
+    pos_b1 = html.index("Epic B1")
+    assert pos_b2 < pos_b1, (
+        f"Epic B2 (rank 1|hza:) should appear before Epic B1 (rank 1|hzz:) "
+        f"within Objective B, but positions were {pos_b2} vs {pos_b1}"
+    )
+
+
+def test_roadmap_page_objective_ordering_with_empty_parent_rank(client):
+    """Objectives with empty parent_rank sort after those with real ranks."""
+    from psycopg.types.json import Jsonb as _Jsonb
+
+    from src.jira_sync import register_cycle
+
+    register_cycle("26.04", state="current")
+
+    color = _Jsonb({"health": {"color": "green"}, "carry_over": None})
+    pid = _get_uncategorized_id()
+    with get_db_connection() as conn, conn.cursor() as cur:
+        # Objective with a real parent_rank
+        cur.execute(
+            "INSERT INTO roadmap_item "
+            "  (jira_key, title, status, tags, product_id, color_status, url, "
+            "   parent_key, parent_summary, rank, parent_rank) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (
+                "ER-1",
+                "Ranked epic",
+                "Open",
+                ["26.04"],
+                pid,
+                color,
+                "http://j/ER-1",
+                "OBJ-R",
+                "Ranked Objective",
+                "1|aaa:",
+                "1|bbb:",
+            ),
+        )
+        # Objective with empty parent_rank (fetch failed) → should sort AFTER
+        cur.execute(
+            "INSERT INTO roadmap_item "
+            "  (jira_key, title, status, tags, product_id, color_status, url, "
+            "   parent_key, parent_summary, rank, parent_rank) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (
+                "ER-2",
+                "Unranked epic",
+                "Open",
+                ["26.04"],
+                pid,
+                color,
+                "http://j/ER-2",
+                "OBJ-U",
+                "Unranked Objective",
+                "1|aaa:",
+                "",
+            ),
+        )
+        conn.commit()
+
+    resp = client.get("/", params={"product": "Uncategorized", "cycle": "26.04"})
+    assert resp.status_code == 200
+    html = resp.text
+
+    pos_ranked = html.index("Ranked Objective")
+    pos_unranked = html.index("Unranked Objective")
+    assert pos_ranked < pos_unranked, (
+        "Objective with a real parent_rank should appear before one with empty parent_rank"
+    )
+
+
 def test_sync_schedule_after_sync(client):
     """After writing sync metadata, the endpoint returns timing info."""
     from datetime import UTC, datetime, timedelta
