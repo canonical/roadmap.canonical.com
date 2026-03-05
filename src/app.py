@@ -129,8 +129,7 @@ app = FastAPI(
     title="Roadmap API",
     version="0.1.0",
     description=(
-        "Company-wide roadmap visualisation tool.  "
-        "Data flows from Jira → PostgreSQL → this API → server-rendered UI."
+        "Company-wide roadmap visualisation tool.  Data flows from Jira → PostgreSQL → this API → server-rendered UI."
     ),
     lifespan=lifespan,
     openapi_tags=_OPENAPI_TAGS,
@@ -197,14 +196,18 @@ def _run_full_sync() -> None:
         _sync_status["state"] = "done"
         logger.info("Sync complete — fetched=%d, processed=%d, snapshot=%d", fetched, processed, snapshot_count)
         _update_sync_metadata(
-            finished=True, ok=True, interval=settings.sync_interval_seconds,
+            finished=True,
+            ok=True,
+            interval=settings.sync_interval_seconds,
         )
     except Exception as exc:
         logger.exception("Sync failed: %s", exc)
         _sync_status["state"] = "failed"
         _sync_status["error"] = str(exc)
         _update_sync_metadata(
-            finished=True, ok=False, error=str(exc),
+            finished=True,
+            ok=False,
+            error=str(exc),
             interval=settings.sync_interval_seconds,
         )
     finally:
@@ -214,6 +217,7 @@ def _run_full_sync() -> None:
 # ---------------------------------------------------------------------------
 # Authentication endpoints
 # ---------------------------------------------------------------------------
+
 
 @app.get("/login", tags=["Auth"])
 async def login(request: Request):
@@ -261,6 +265,7 @@ curl -b 'roadmap_session={cookie_value}' {base_url}/api/v1/status</code></pre>
 # Endpoints
 # ---------------------------------------------------------------------------
 
+
 @app.post("/api/v1/sync", tags=["Sync"])
 def trigger_sync(background_tasks: BackgroundTasks):
     """Kick off a background Jira sync."""
@@ -292,9 +297,7 @@ async def get_status():
                 await cur.execute("SELECT count(*) FROM roadmap_snapshot")
                 db_counts["snapshot_rows"] = (await cur.fetchone())[0]
                 # Also read persisted error from sync_metadata (written by scheduler)
-                await cur.execute(
-                    "SELECT error_message, last_sync_ok FROM sync_metadata WHERE id = 1"
-                )
+                await cur.execute("SELECT error_message, last_sync_ok FROM sync_metadata WHERE id = 1")
                 meta_row = await cur.fetchone()
                 if meta_row:
                     db_error_message = meta_row[0]
@@ -363,12 +366,8 @@ async def get_sync_schedule():
         "last_sync_ok": last_ok,
         "next_sync_at": next_at.isoformat() if next_at else None,
         "interval_seconds": interval,
-        "seconds_since_last_sync": (
-            int((now - last_end).total_seconds()) if last_end else None
-        ),
-        "seconds_until_next_sync": (
-            int((next_at - now).total_seconds()) if next_at else None
-        ),
+        "seconds_since_last_sync": (int((now - last_end).total_seconds()) if last_end else None),
+        "seconds_until_next_sync": (int((next_at - now).total_seconds()) if next_at else None),
         "error_message": error,
     }
 
@@ -411,8 +410,7 @@ async def snapshot_diff(
         async with conn.cursor() as cur:
             # Verify both dates exist
             await cur.execute(
-                "SELECT DISTINCT snapshot_date FROM roadmap_snapshot "
-                "WHERE snapshot_date IN (%s, %s)",
+                "SELECT DISTINCT snapshot_date FROM roadmap_snapshot WHERE snapshot_date IN (%s, %s)",
                 (from_date, to_date),
             )
             found_dates = {str(r[0]) for r in await cur.fetchall()}
@@ -669,6 +667,7 @@ async def get_roadmap(
 # Product CRUD — /api/v1/products
 # ---------------------------------------------------------------------------
 
+
 class JiraSourceIn(BaseModel):
     """Input schema for a Jira source rule within a product."""
 
@@ -878,7 +877,9 @@ async def _query_filter_options(department: str | None = None) -> dict:
 
             # Products for the selected department (or all if none selected)
             if department:
-                await cur.execute("SELECT DISTINCT name FROM product WHERE department = %s ORDER BY name", (department,))
+                await cur.execute(
+                    "SELECT DISTINCT name FROM product WHERE department = %s ORDER BY name", (department,)
+                )
             else:
                 await cur.execute("SELECT DISTINCT name FROM product ORDER BY name")
             products = [r[0] for r in await cur.fetchall()]
@@ -1155,7 +1156,9 @@ async def roadmap_page(
             cycle = current[0]
 
     grouped_items, objective_urls, cycle_states = await _query_roadmap_items(
-        department=department, product=product, cycle=cycle,
+        department=department,
+        product=product,
+        cycle=cycle,
     )
 
     return templates.TemplateResponse(

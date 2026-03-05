@@ -20,6 +20,7 @@ from src.jira_sync import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _get_uncategorized_id() -> int:
     with get_db_connection() as conn, conn.cursor() as cur:
         cur.execute("SELECT id FROM product WHERE name = 'Uncategorized'")
@@ -69,9 +70,15 @@ def _insert_roadmap_item(
                 updated_at = now()
             """,
             (
-                jira_key, title, status, color_status, product_id,
-                tags or [], f"https://jira.test/browse/{jira_key}",
-                parent_key, parent_summary,
+                jira_key,
+                title,
+                status,
+                color_status,
+                product_id,
+                tags or [],
+                f"https://jira.test/browse/{jira_key}",
+                parent_key,
+                parent_summary,
             ),
         )
         conn.commit()
@@ -93,9 +100,7 @@ def test_freeze_captures_items_with_cycle_tag():
     assert count == 2  # FC-1 and FC-2, not FC-3
 
     with get_db_connection() as conn, conn.cursor() as cur:
-        cur.execute(
-            "SELECT jira_key FROM cycle_freeze_item WHERE cycle = '25.10' ORDER BY jira_key"
-        )
+        cur.execute("SELECT jira_key FROM cycle_freeze_item WHERE cycle = '25.10' ORDER BY jira_key")
         keys = [r[0] for r in cur.fetchall()]
     assert keys == ["FC-1", "FC-2"]
 
@@ -109,8 +114,7 @@ def test_freeze_captures_product_info():
 
     with get_db_connection() as conn, conn.cursor() as cur:
         cur.execute(
-            "SELECT product_name, department FROM cycle_freeze_item "
-            "WHERE jira_key = 'FP-1' AND cycle = '25.10'"
+            "SELECT product_name, department FROM cycle_freeze_item WHERE jira_key = 'FP-1' AND cycle = '25.10'"
         )
         row = cur.fetchone()
     assert row == ("Juju", "Infra")
@@ -124,10 +128,7 @@ def test_freeze_captures_color_status():
     freeze_cycle("25.10")
 
     with get_db_connection() as conn, conn.cursor() as cur:
-        cur.execute(
-            "SELECT color_status FROM cycle_freeze_item "
-            "WHERE jira_key = 'FCS-1' AND cycle = '25.10'"
-        )
+        cur.execute("SELECT color_status FROM cycle_freeze_item WHERE jira_key = 'FCS-1' AND cycle = '25.10'")
         cs = cur.fetchone()[0]
     assert cs["health"]["color"] == "orange"
 
@@ -136,16 +137,21 @@ def test_freeze_captures_objective():
     """Frozen items include parent_key and parent_summary."""
     pid = _insert_product("Snap")
     _insert_roadmap_item(
-        "FO-1", "Child epic", "Open", "green", pid, tags=["25.10"],
-        parent_key="OBJ-100", parent_summary="Big Objective",
+        "FO-1",
+        "Child epic",
+        "Open",
+        "green",
+        pid,
+        tags=["25.10"],
+        parent_key="OBJ-100",
+        parent_summary="Big Objective",
     )
 
     freeze_cycle("25.10")
 
     with get_db_connection() as conn, conn.cursor() as cur:
         cur.execute(
-            "SELECT parent_key, parent_summary FROM cycle_freeze_item "
-            "WHERE jira_key = 'FO-1' AND cycle = '25.10'"
+            "SELECT parent_key, parent_summary FROM cycle_freeze_item WHERE jira_key = 'FO-1' AND cycle = '25.10'"
         )
         row = cur.fetchone()
     assert row == ("OBJ-100", "Big Objective")
@@ -526,8 +532,14 @@ def test_roadmap_page_frozen_cycle_shows_frozen_data(client):
     """When a cycle is frozen, the roadmap page shows the frozen snapshot, not live data."""
     pid = _insert_product("MyProd")
     _insert_roadmap_item(
-        "RP-1", "Original title", "In Progress", "green", pid,
-        tags=["25.10"], parent_key="OBJ-1", parent_summary="Objective A",
+        "RP-1",
+        "Original title",
+        "In Progress",
+        "green",
+        pid,
+        tags=["25.10"],
+        parent_key="OBJ-1",
+        parent_summary="Objective A",
     )
 
     # Freeze the cycle via cycle_config
@@ -535,8 +547,14 @@ def test_roadmap_page_frozen_cycle_shows_frozen_data(client):
 
     # Now change the live data (simulating a Jira sync after freeze)
     _insert_roadmap_item(
-        "RP-1", "Updated title after freeze", "Done", "red", pid,
-        tags=["25.10"], parent_key="OBJ-1", parent_summary="Objective A",
+        "RP-1",
+        "Updated title after freeze",
+        "Done",
+        "red",
+        pid,
+        tags=["25.10"],
+        parent_key="OBJ-1",
+        parent_summary="Objective A",
     )
 
     # The page should still show the frozen (original) data
@@ -562,8 +580,14 @@ def test_roadmap_page_future_cycle_shows_inactive(client):
     """Future cycles show all items as white/Inactive."""
     pid = _insert_product("FutureProd")
     _insert_roadmap_item(
-        "FUT-1", "Future item", "In Progress", "green", pid,
-        tags=["27.04"], parent_key="OBJ-F", parent_summary="Future Obj",
+        "FUT-1",
+        "Future item",
+        "In Progress",
+        "green",
+        pid,
+        tags=["27.04"],
+        parent_key="OBJ-F",
+        parent_summary="Future Obj",
     )
     register_cycle("27.04", state="future")
 
@@ -600,8 +624,14 @@ def test_roadmap_page_unfrozen_cycle_shows_live_data(client):
     """Non-frozen cycles continue to show live data from roadmap_item."""
     pid = _insert_product("LiveProd")
     _insert_roadmap_item(
-        "UL-1", "Live title", "Open", "green", pid,
-        tags=["26.04"], parent_key="OBJ-2", parent_summary="Objective B",
+        "UL-1",
+        "Live title",
+        "Open",
+        "green",
+        pid,
+        tags=["26.04"],
+        parent_key="OBJ-2",
+        parent_summary="Objective B",
     )
 
     resp = client.get("/", params={"product": "LiveProd", "cycle": "26.04"})
@@ -616,9 +646,14 @@ def test_roadmap_page_carry_over_only_counts_frozen(client):
     pid = _insert_product("CarryProd")
     # Item appears in 3 cycles: 25.04 (frozen), 25.10 (frozen), 26.04 (current)
     _insert_roadmap_item(
-        "CO-1", "Carry item", "In Progress", "green", pid,
+        "CO-1",
+        "Carry item",
+        "In Progress",
+        "green",
+        pid,
         tags=["25.04", "25.10", "26.04"],
-        parent_key="OBJ-CO", parent_summary="Carry Obj",
+        parent_key="OBJ-CO",
+        parent_summary="Carry Obj",
     )
 
     register_cycle("25.04", state="frozen")
@@ -631,9 +666,7 @@ def test_roadmap_page_carry_over_only_counts_frozen(client):
 
     loop = asyncio.new_event_loop()
     try:
-        grouped, _, _ = loop.run_until_complete(
-            _query_roadmap_items(product="CarryProd", cycle="26.04")
-        )
+        grouped, _, _ = loop.run_until_complete(_query_roadmap_items(product="CarryProd", cycle="26.04"))
     finally:
         loop.close()
 
@@ -654,9 +687,14 @@ def test_roadmap_page_carry_over_zero_when_no_frozen(client):
     """Carry-over is None when there are no frozen cycle labels on the item."""
     pid = _insert_product("NoCarryProd")
     _insert_roadmap_item(
-        "NC-1", "No carry", "Open", "green", pid,
+        "NC-1",
+        "No carry",
+        "Open",
+        "green",
+        pid,
         tags=["26.04", "26.10"],
-        parent_key="OBJ-NC", parent_summary="No Carry Obj",
+        parent_key="OBJ-NC",
+        parent_summary="No Carry Obj",
     )
 
     register_cycle("26.04", state="current")
@@ -668,9 +706,7 @@ def test_roadmap_page_carry_over_zero_when_no_frozen(client):
 
     loop = asyncio.new_event_loop()
     try:
-        grouped, _, _ = loop.run_until_complete(
-            _query_roadmap_items(product="NoCarryProd", cycle="26.04")
-        )
+        grouped, _, _ = loop.run_until_complete(_query_roadmap_items(product="NoCarryProd", cycle="26.04"))
     finally:
         loop.close()
 

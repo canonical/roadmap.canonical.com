@@ -34,6 +34,7 @@ def _setup_test_database():
     # Force settings to re-read from env
     import src.settings as settings_mod
     from src.settings import Settings
+
     settings_mod.settings = Settings()
 
     from src.database import get_db_connection

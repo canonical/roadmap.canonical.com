@@ -15,10 +15,17 @@ def _get_uncategorized_id() -> int:
         return cur.fetchone()[0]
 
 
-def _insert_roadmap_item(jira_key: str, title: str, status: str, color: str,
-                          product_id: int | None = None, tags: list[str] | None = None,
-                          parent_key: str | None = None, parent_summary: str | None = None,
-                          release: str | None = None) -> None:
+def _insert_roadmap_item(
+    jira_key: str,
+    title: str,
+    status: str,
+    color: str,
+    product_id: int | None = None,
+    tags: list[str] | None = None,
+    parent_key: str | None = None,
+    parent_summary: str | None = None,
+    release: str | None = None,
+) -> None:
     """Insert a roadmap_item row for testing."""
     color_status = Jsonb({"health": {"color": color}, "carry_over": None})
     if product_id is None:
@@ -41,8 +48,7 @@ def _insert_roadmap_item(jira_key: str, title: str, status: str, color: str,
                 release = EXCLUDED.release,
                 updated_at = now()
             """,
-            (jira_key, title, status, color_status, product_id,
-             tags or [], parent_key, parent_summary, release),
+            (jira_key, title, status, color_status, product_id, tags or [], parent_key, parent_summary, release),
         )
         conn.commit()
 
@@ -90,9 +96,7 @@ def test_snapshot_is_idempotent():
 def test_snapshot_captures_product_info():
     """Snapshot denormalizes product name and department."""
     with get_db_connection() as conn, conn.cursor() as cur:
-        cur.execute(
-            "INSERT INTO product (name, department) VALUES ('Juju', 'Infra') RETURNING id"
-        )
+        cur.execute("INSERT INTO product (name, department) VALUES ('Juju', 'Infra') RETURNING id")
         juju_id = cur.fetchone()[0]
         conn.commit()
 
@@ -126,10 +130,7 @@ def test_snapshot_different_dates():
     take_daily_snapshot(snapshot_date=date(2026, 2, 15))
 
     with get_db_connection() as conn, conn.cursor() as cur:
-        cur.execute(
-            "SELECT title, color FROM roadmap_snapshot "
-            "WHERE jira_key = 'SNAP-5' ORDER BY snapshot_date"
-        )
+        cur.execute("SELECT title, color FROM roadmap_snapshot WHERE jira_key = 'SNAP-5' ORDER BY snapshot_date")
         rows = cur.fetchall()
 
     assert rows[0] == ("Item v1", "green")
@@ -151,10 +152,13 @@ def test_diff_turned_red(client):
     _insert_roadmap_item("DIFF-1", "Went red", "Open", "red")
     take_daily_snapshot(snapshot_date=date(2026, 2, 15))
 
-    resp = client.get("/api/v1/snapshots/diff", params={
-        "from_date": "2026-02-01",
-        "to_date": "2026-02-15",
-    })
+    resp = client.get(
+        "/api/v1/snapshots/diff",
+        params={
+            "from_date": "2026-02-01",
+            "to_date": "2026-02-15",
+        },
+    )
     assert resp.status_code == 200
     body = resp.json()
 
@@ -180,10 +184,13 @@ def test_diff_disappeared(client):
         conn.commit()
     take_daily_snapshot(snapshot_date=date(2026, 2, 15))
 
-    resp = client.get("/api/v1/snapshots/diff", params={
-        "from_date": "2026-02-01",
-        "to_date": "2026-02-15",
-    })
+    resp = client.get(
+        "/api/v1/snapshots/diff",
+        params={
+            "from_date": "2026-02-01",
+            "to_date": "2026-02-15",
+        },
+    )
     body = resp.json()
 
     assert body["summary"]["disappeared"] == 1
@@ -198,10 +205,13 @@ def test_diff_appeared(client):
     _insert_roadmap_item("NEW-1", "Just added", "Open", "yellow")
     take_daily_snapshot(snapshot_date=date(2026, 2, 15))
 
-    resp = client.get("/api/v1/snapshots/diff", params={
-        "from_date": "2026-02-01",
-        "to_date": "2026-02-15",
-    })
+    resp = client.get(
+        "/api/v1/snapshots/diff",
+        params={
+            "from_date": "2026-02-01",
+            "to_date": "2026-02-15",
+        },
+    )
     body = resp.json()
 
     assert body["summary"]["appeared"] == 1
@@ -218,10 +228,13 @@ def test_diff_color_changes(client):
     _insert_roadmap_item("CC-2", "Red to green", "Done", "green")
     take_daily_snapshot(snapshot_date=date(2026, 2, 15))
 
-    resp = client.get("/api/v1/snapshots/diff", params={
-        "from_date": "2026-02-01",
-        "to_date": "2026-02-15",
-    })
+    resp = client.get(
+        "/api/v1/snapshots/diff",
+        params={
+            "from_date": "2026-02-01",
+            "to_date": "2026-02-15",
+        },
+    )
     body = resp.json()
 
     assert body["summary"]["color_changes"] == 2
@@ -230,10 +243,13 @@ def test_diff_color_changes(client):
 
 def test_diff_missing_snapshot_returns_404(client):
     """Requesting a diff with a non-existent date returns 404."""
-    resp = client.get("/api/v1/snapshots/diff", params={
-        "from_date": "2020-01-01",
-        "to_date": "2020-01-15",
-    })
+    resp = client.get(
+        "/api/v1/snapshots/diff",
+        params={
+            "from_date": "2020-01-01",
+            "to_date": "2020-01-15",
+        },
+    )
     assert resp.status_code == 404
 
 
@@ -264,10 +280,13 @@ def test_diff_no_changes(client):
     # Same data, different date
     take_daily_snapshot(snapshot_date=date(2026, 2, 15))
 
-    resp = client.get("/api/v1/snapshots/diff", params={
-        "from_date": "2026-02-01",
-        "to_date": "2026-02-15",
-    })
+    resp = client.get(
+        "/api/v1/snapshots/diff",
+        params={
+            "from_date": "2026-02-01",
+            "to_date": "2026-02-15",
+        },
+    )
     body = resp.json()
 
     assert body["summary"]["turned_red"] == 0

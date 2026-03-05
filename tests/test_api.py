@@ -89,6 +89,7 @@ def test_status_endpoint(client):
 # Product CRUD tests
 # ---------------------------------------------------------------------------
 
+
 def test_list_products(client):
     """GET /api/v1/products returns the seeded Uncategorized product."""
     resp = client.get("/api/v1/products")
@@ -99,25 +100,28 @@ def test_list_products(client):
 
 def test_create_product(client):
     """POST /api/v1/products creates a product with Jira sources."""
-    resp = client.post("/api/v1/products", json={
-        "name": "MAAS",
-        "department": "Engineering",
-        "jira_sources": [
-            {
-                "jira_project_key": "MAAS",
-                "include_components": ["UI", "API"],
-                "exclude_components": None,
-                "include_labels": None,
-                "exclude_labels": None,
-                "include_teams": ["MAAS-team"],
-                "exclude_teams": None,
-            },
-            {
-                "jira_project_key": "SNAP",
-                "include_labels": ["maas-related"],
-            },
-        ],
-    })
+    resp = client.post(
+        "/api/v1/products",
+        json={
+            "name": "MAAS",
+            "department": "Engineering",
+            "jira_sources": [
+                {
+                    "jira_project_key": "MAAS",
+                    "include_components": ["UI", "API"],
+                    "exclude_components": None,
+                    "include_labels": None,
+                    "exclude_labels": None,
+                    "include_teams": ["MAAS-team"],
+                    "exclude_teams": None,
+                },
+                {
+                    "jira_project_key": "SNAP",
+                    "include_labels": ["maas-related"],
+                },
+            ],
+        },
+    )
     assert resp.status_code == 201
     product = resp.json()["data"]
     assert product["name"] == "MAAS"
@@ -148,21 +152,27 @@ def test_get_product_not_found(client):
 
 def test_update_product(client):
     """PUT /api/v1/products/{id} replaces product details and sources."""
-    create = client.post("/api/v1/products", json={
-        "name": "LXD",
-        "department": "Containers",
-        "jira_sources": [{"jira_project_key": "LXD"}],
-    })
+    create = client.post(
+        "/api/v1/products",
+        json={
+            "name": "LXD",
+            "department": "Containers",
+            "jira_sources": [{"jira_project_key": "LXD"}],
+        },
+    )
     pid = create.json()["data"]["id"]
 
-    resp = client.put(f"/api/v1/products/{pid}", json={
-        "name": "LXD",
-        "department": "Containers",
-        "jira_sources": [
-            {"jira_project_key": "LXD", "exclude_components": ["CI"]},
-            {"jira_project_key": "WD", "include_components": ["Anbox/LXD Tribe"]},
-        ],
-    })
+    resp = client.put(
+        f"/api/v1/products/{pid}",
+        json={
+            "name": "LXD",
+            "department": "Containers",
+            "jira_sources": [
+                {"jira_project_key": "LXD", "exclude_components": ["CI"]},
+                {"jira_project_key": "WD", "include_components": ["Anbox/LXD Tribe"]},
+            ],
+        },
+    )
     assert resp.status_code == 200
     product = resp.json()["data"]
     assert len(product["jira_sources"]) == 2
@@ -207,6 +217,7 @@ def test_delete_product_unlinks_roadmap_items(client):
 # ---------------------------------------------------------------------------
 # HTML page tests
 # ---------------------------------------------------------------------------
+
 
 def test_roadmap_page_empty(client):
     """GET / returns an HTML page even with no data."""
@@ -353,8 +364,7 @@ def test_roadmap_page_filter_by_product(client):
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO product (name, department) VALUES ('Juju', 'Engineering') "
-                "ON CONFLICT (name) DO NOTHING"
+                "INSERT INTO product (name, department) VALUES ('Juju', 'Engineering') ON CONFLICT (name) DO NOTHING"
             )
             cur.execute("SELECT id FROM product WHERE name = 'Juju'")
             juju_id = cur.fetchone()[0]

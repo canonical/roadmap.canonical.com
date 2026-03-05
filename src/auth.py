@@ -44,6 +44,7 @@ def configure_oauth() -> None:
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def is_authenticated(request: Request) -> bool:
     """Return ``True`` when the session contains a valid user dict."""
     return "user" in request.session
