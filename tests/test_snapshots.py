@@ -1,6 +1,5 @@
 """Tests for the daily snapshot and diff reporting feature."""
 
-import json
 from datetime import date
 
 from psycopg.types.json import Jsonb

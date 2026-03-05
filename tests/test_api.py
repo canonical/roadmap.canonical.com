@@ -1,6 +1,5 @@
 """Tests for /api/v1/* endpoints."""
 
-import json
 
 from psycopg.types.json import Jsonb
 
