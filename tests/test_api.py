@@ -401,6 +401,7 @@ def test_sync_schedule_no_sync_yet(client):
 def test_roadmap_page_objective_and_epic_ordering(client):
     """Objectives are ordered by parent_rank, epics within each objective by rank."""
     from psycopg.types.json import Jsonb as _Jsonb
+
     from src.jira_sync import register_cycle
 
     register_cycle("26.04", state="current")
@@ -414,16 +415,38 @@ def test_roadmap_page_objective_and_epic_ordering(client):
             "  (jira_key, title, status, tags, product_id, color_status, url, "
             "   parent_key, parent_summary, rank, parent_rank) "
             "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-            ("E-1", "Epic B1", "Open", ["26.04"], pid, color, "http://j/E-1",
-             "OBJ-B", "Objective B", "1|hzz:", "1|hzolnr:"),
+            (
+                "E-1",
+                "Epic B1",
+                "Open",
+                ["26.04"],
+                pid,
+                color,
+                "http://j/E-1",
+                "OBJ-B",
+                "Objective B",
+                "1|hzz:",
+                "1|hzolnr:",
+            ),
         )
         cur.execute(
             "INSERT INTO roadmap_item "
             "  (jira_key, title, status, tags, product_id, color_status, url, "
             "   parent_key, parent_summary, rank, parent_rank) "
             "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-            ("E-2", "Epic B2", "Open", ["26.04"], pid, color, "http://j/E-2",
-             "OBJ-B", "Objective B", "1|hza:", "1|hzolnr:"),
+            (
+                "E-2",
+                "Epic B2",
+                "Open",
+                ["26.04"],
+                pid,
+                color,
+                "http://j/E-2",
+                "OBJ-B",
+                "Objective B",
+                "1|hza:",
+                "1|hzolnr:",
+            ),
         )
         # Objective A has a LOWER parent_rank → should appear FIRST
         cur.execute(
@@ -431,16 +454,38 @@ def test_roadmap_page_objective_and_epic_ordering(client):
             "  (jira_key, title, status, tags, product_id, color_status, url, "
             "   parent_key, parent_summary, rank, parent_rank) "
             "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-            ("E-3", "Epic A1", "Open", ["26.04"], pid, color, "http://j/E-3",
-             "OBJ-A", "Objective A", "1|hab:", "1|hzolnb:"),
+            (
+                "E-3",
+                "Epic A1",
+                "Open",
+                ["26.04"],
+                pid,
+                color,
+                "http://j/E-3",
+                "OBJ-A",
+                "Objective A",
+                "1|hab:",
+                "1|hzolnb:",
+            ),
         )
         cur.execute(
             "INSERT INTO roadmap_item "
             "  (jira_key, title, status, tags, product_id, color_status, url, "
             "   parent_key, parent_summary, rank, parent_rank) "
             "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-            ("E-4", "Epic A2", "Open", ["26.04"], pid, color, "http://j/E-4",
-             "OBJ-A", "Objective A", "1|hzz:", "1|hzolnb:"),
+            (
+                "E-4",
+                "Epic A2",
+                "Open",
+                ["26.04"],
+                pid,
+                color,
+                "http://j/E-4",
+                "OBJ-A",
+                "Objective A",
+                "1|hzz:",
+                "1|hzolnb:",
+            ),
         )
         conn.commit()
 
@@ -476,6 +521,7 @@ def test_roadmap_page_objective_and_epic_ordering(client):
 def test_roadmap_page_objective_ordering_with_empty_parent_rank(client):
     """Objectives with empty parent_rank sort after those with real ranks."""
     from psycopg.types.json import Jsonb as _Jsonb
+
     from src.jira_sync import register_cycle
 
     register_cycle("26.04", state="current")
@@ -489,8 +535,19 @@ def test_roadmap_page_objective_ordering_with_empty_parent_rank(client):
             "  (jira_key, title, status, tags, product_id, color_status, url, "
             "   parent_key, parent_summary, rank, parent_rank) "
             "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-            ("ER-1", "Ranked epic", "Open", ["26.04"], pid, color, "http://j/ER-1",
-             "OBJ-R", "Ranked Objective", "1|aaa:", "1|bbb:"),
+            (
+                "ER-1",
+                "Ranked epic",
+                "Open",
+                ["26.04"],
+                pid,
+                color,
+                "http://j/ER-1",
+                "OBJ-R",
+                "Ranked Objective",
+                "1|aaa:",
+                "1|bbb:",
+            ),
         )
         # Objective with empty parent_rank (fetch failed) → should sort AFTER
         cur.execute(
@@ -498,8 +555,19 @@ def test_roadmap_page_objective_ordering_with_empty_parent_rank(client):
             "  (jira_key, title, status, tags, product_id, color_status, url, "
             "   parent_key, parent_summary, rank, parent_rank) "
             "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-            ("ER-2", "Unranked epic", "Open", ["26.04"], pid, color, "http://j/ER-2",
-             "OBJ-U", "Unranked Objective", "1|aaa:", ""),
+            (
+                "ER-2",
+                "Unranked epic",
+                "Open",
+                ["26.04"],
+                pid,
+                color,
+                "http://j/ER-2",
+                "OBJ-U",
+                "Unranked Objective",
+                "1|aaa:",
+                "",
+            ),
         )
         conn.commit()
 
