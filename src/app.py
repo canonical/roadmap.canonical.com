@@ -105,14 +105,13 @@ class OIDCAuthMiddleware(BaseHTTPMiddleware):
     """
 
     async def dispatch(self, request: Request, call_next):
-        if settings.oidc_client_id and request.url.path not in _PUBLIC_PATHS:
-            if not is_authenticated(request):
-                if request.url.path.startswith("/api/"):
-                    return JSONResponse(
-                        status_code=401,
-                        content={"detail": "Authentication required"},
-                    )
-                return RedirectResponse(url="/login")
+        if settings.oidc_client_id and request.url.path not in _PUBLIC_PATHS and not is_authenticated(request):
+            if request.url.path.startswith("/api/"):
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "Authentication required"},
+                )
+            return RedirectResponse(url="/login")
         return await call_next(request)
 
 
@@ -129,8 +128,7 @@ app = FastAPI(
     title="Roadmap API",
     version="0.1.0",
     description=(
-        "Company-wide roadmap visualisation tool.  "
-        "Data flows from Jira → PostgreSQL → this API → server-rendered UI."
+        "Company-wide roadmap visualisation tool.  Data flows from Jira → PostgreSQL → this API → server-rendered UI."
     ),
     lifespan=lifespan,
     openapi_tags=_OPENAPI_TAGS,
@@ -197,14 +195,18 @@ def _run_full_sync() -> None:
         _sync_status["state"] = "done"
         logger.info("Sync complete — fetched=%d, processed=%d, snapshot=%d", fetched, processed, snapshot_count)
         _update_sync_metadata(
-            finished=True, ok=True, interval=settings.sync_interval_seconds,
+            finished=True,
+            ok=True,
+            interval=settings.sync_interval_seconds,
         )
     except Exception as exc:
         logger.exception("Sync failed: %s", exc)
         _sync_status["state"] = "failed"
         _sync_status["error"] = str(exc)
         _update_sync_metadata(
-            finished=True, ok=False, error=str(exc),
+            finished=True,
+            ok=False,
+            error=str(exc),
             interval=settings.sync_interval_seconds,
         )
     finally:
@@ -214,6 +216,7 @@ def _run_full_sync() -> None:
 # ---------------------------------------------------------------------------
 # Authentication endpoints
 # ---------------------------------------------------------------------------
+
 
 @app.get("/login", tags=["Auth"])
 async def login(request: Request):
@@ -261,6 +264,7 @@ curl -b 'roadmap_session={cookie_value}' {base_url}/api/v1/status</code></pre>
 # Endpoints
 # ---------------------------------------------------------------------------
 
+
 @app.post("/api/v1/sync", tags=["Sync"])
 def trigger_sync(background_tasks: BackgroundTasks):
     """Kick off a background Jira sync."""
@@ -277,28 +281,25 @@ async def get_status():
     db_error_message = None
     db_last_sync_ok = None
     try:
-        async with get_async_conn() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute("SELECT count(*) FROM jira_issue_raw")
-                db_counts["raw_issues"] = (await cur.fetchone())[0]
-                await cur.execute("SELECT count(*) FROM jira_issue_raw WHERE processed_at IS NOT NULL")
-                db_counts["raw_processed"] = (await cur.fetchone())[0]
-                await cur.execute("SELECT count(*) FROM roadmap_item")
-                db_counts["roadmap_items"] = (await cur.fetchone())[0]
-                await cur.execute("SELECT count(*) FROM product")
-                db_counts["products"] = (await cur.fetchone())[0]
-                await cur.execute("SELECT count(DISTINCT snapshot_date) FROM roadmap_snapshot")
-                db_counts["snapshot_dates"] = (await cur.fetchone())[0]
-                await cur.execute("SELECT count(*) FROM roadmap_snapshot")
-                db_counts["snapshot_rows"] = (await cur.fetchone())[0]
-                # Also read persisted error from sync_metadata (written by scheduler)
-                await cur.execute(
-                    "SELECT error_message, last_sync_ok FROM sync_metadata WHERE id = 1"
-                )
-                meta_row = await cur.fetchone()
-                if meta_row:
-                    db_error_message = meta_row[0]
-                    db_last_sync_ok = meta_row[1]
+        async with get_async_conn() as conn, conn.cursor() as cur:
+            await cur.execute("SELECT count(*) FROM jira_issue_raw")
+            db_counts["raw_issues"] = (await cur.fetchone())[0]
+            await cur.execute("SELECT count(*) FROM jira_issue_raw WHERE processed_at IS NOT NULL")
+            db_counts["raw_processed"] = (await cur.fetchone())[0]
+            await cur.execute("SELECT count(*) FROM roadmap_item")
+            db_counts["roadmap_items"] = (await cur.fetchone())[0]
+            await cur.execute("SELECT count(*) FROM product")
+            db_counts["products"] = (await cur.fetchone())[0]
+            await cur.execute("SELECT count(DISTINCT snapshot_date) FROM roadmap_snapshot")
+            db_counts["snapshot_dates"] = (await cur.fetchone())[0]
+            await cur.execute("SELECT count(*) FROM roadmap_snapshot")
+            db_counts["snapshot_rows"] = (await cur.fetchone())[0]
+            # Also read persisted error from sync_metadata (written by scheduler)
+            await cur.execute("SELECT error_message, last_sync_ok FROM sync_metadata WHERE id = 1")
+            meta_row = await cur.fetchone()
+            if meta_row:
+                db_error_message = meta_row[0]
+                db_last_sync_ok = meta_row[1]
     except Exception:
         db_counts["error"] = "could not query database"
 
@@ -339,14 +340,13 @@ async def get_sync_schedule():
     keeps up-to-date, so it survives process restarts.
     """
     try:
-        async with get_async_conn() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    "SELECT last_sync_start, last_sync_end, last_sync_ok, "
-                    "       next_sync_at, interval_seconds, error_message "
-                    "FROM sync_metadata WHERE id = 1"
-                )
-                row = await cur.fetchone()
+        async with get_async_conn() as conn, conn.cursor() as cur:
+            await cur.execute(
+                "SELECT last_sync_start, last_sync_end, last_sync_ok, "
+                "       next_sync_at, interval_seconds, error_message "
+                "FROM sync_metadata WHERE id = 1"
+            )
+            row = await cur.fetchone()
     except Exception:
         return {"error": "could not query sync_metadata"}
 
@@ -363,12 +363,8 @@ async def get_sync_schedule():
         "last_sync_ok": last_ok,
         "next_sync_at": next_at.isoformat() if next_at else None,
         "interval_seconds": interval,
-        "seconds_since_last_sync": (
-            int((now - last_end).total_seconds()) if last_end else None
-        ),
-        "seconds_until_next_sync": (
-            int((next_at - now).total_seconds()) if next_at else None
-        ),
+        "seconds_since_last_sync": (int((now - last_end).total_seconds()) if last_end else None),
+        "seconds_until_next_sync": (int((next_at - now).total_seconds()) if next_at else None),
         "error_message": error,
     }
 
@@ -381,13 +377,12 @@ async def get_sync_schedule():
 @app.get("/api/v1/snapshots", tags=["Snapshots"])
 async def list_snapshots():
     """List all available snapshot dates (newest first)."""
-    async with get_async_conn() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute(
-                "SELECT snapshot_date, count(*) AS item_count "
-                "FROM roadmap_snapshot GROUP BY snapshot_date ORDER BY snapshot_date DESC"
-            )
-            rows = await cur.fetchall()
+    async with get_async_conn() as conn, conn.cursor() as cur:
+        await cur.execute(
+            "SELECT snapshot_date, count(*) AS item_count "
+            "FROM roadmap_snapshot GROUP BY snapshot_date ORDER BY snapshot_date DESC"
+        )
+        rows = await cur.fetchall()
     return {
         "data": [{"date": str(r[0]), "item_count": r[1]} for r in rows],
         "meta": {"total": len(rows)},
@@ -407,25 +402,23 @@ async def snapshot_diff(
     - ``disappeared``  — items present on *from_date* but missing on *to_date*
     - ``appeared``     — items present on *to_date* but missing on *from_date*
     """
-    async with get_async_conn() as conn:
-        async with conn.cursor() as cur:
-            # Verify both dates exist
-            await cur.execute(
-                "SELECT DISTINCT snapshot_date FROM roadmap_snapshot "
-                "WHERE snapshot_date IN (%s, %s)",
-                (from_date, to_date),
+    async with get_async_conn() as conn, conn.cursor() as cur:
+        # Verify both dates exist
+        await cur.execute(
+            "SELECT DISTINCT snapshot_date FROM roadmap_snapshot WHERE snapshot_date IN (%s, %s)",
+            (from_date, to_date),
+        )
+        found_dates = {str(r[0]) for r in await cur.fetchall()}
+        missing = {from_date, to_date} - found_dates
+        if missing:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No snapshot found for date(s): {', '.join(sorted(missing))}",
             )
-            found_dates = {str(r[0]) for r in await cur.fetchall()}
-            missing = {from_date, to_date} - found_dates
-            if missing:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"No snapshot found for date(s): {', '.join(sorted(missing))}",
-                )
 
-            # --- Color changes (including turned_red) ---
-            await cur.execute(
-                """
+        # --- Color changes (including turned_red) ---
+        await cur.execute(
+            """
                 SELECT f.jira_key, f.title, f.color AS old_color, t.color AS new_color,
                        t.product_name, t.department, t.status
                 FROM roadmap_snapshot f
@@ -434,15 +427,15 @@ async def snapshot_diff(
                   AND f.color IS DISTINCT FROM t.color
                 ORDER BY t.product_name, f.jira_key
                 """,
-                (from_date, to_date),
-            )
-            color_cols = [d[0] for d in cur.description]
-            color_changes = [dict(zip(color_cols, r, strict=False)) for r in await cur.fetchall()]
-            turned_red = [c for c in color_changes if c["new_color"] == "red"]
+            (from_date, to_date),
+        )
+        color_cols = [d[0] for d in cur.description]
+        color_changes = [dict(zip(color_cols, r, strict=False)) for r in await cur.fetchall()]
+        turned_red = [c for c in color_changes if c["new_color"] == "red"]
 
-            # --- Disappeared items ---
-            await cur.execute(
-                """
+        # --- Disappeared items ---
+        await cur.execute(
+            """
                 SELECT f.jira_key, f.title, f.color, f.status,
                        f.product_name, f.department
                 FROM roadmap_snapshot f
@@ -451,14 +444,14 @@ async def snapshot_diff(
                 WHERE f.snapshot_date = %s AND t.jira_key IS NULL
                 ORDER BY f.product_name, f.jira_key
                 """,
-                (to_date, from_date),
-            )
-            dis_cols = [d[0] for d in cur.description]
-            disappeared = [dict(zip(dis_cols, r, strict=False)) for r in await cur.fetchall()]
+            (to_date, from_date),
+        )
+        dis_cols = [d[0] for d in cur.description]
+        disappeared = [dict(zip(dis_cols, r, strict=False)) for r in await cur.fetchall()]
 
-            # --- Appeared items ---
-            await cur.execute(
-                """
+        # --- Appeared items ---
+        await cur.execute(
+            """
                 SELECT t.jira_key, t.title, t.color, t.status,
                        t.product_name, t.department
                 FROM roadmap_snapshot t
@@ -467,10 +460,10 @@ async def snapshot_diff(
                 WHERE t.snapshot_date = %s AND f.jira_key IS NULL
                 ORDER BY t.product_name, t.jira_key
                 """,
-                (from_date, to_date),
-            )
-            app_cols = [d[0] for d in cur.description]
-            appeared = [dict(zip(app_cols, r, strict=False)) for r in await cur.fetchall()]
+            (from_date, to_date),
+        )
+        app_cols = [d[0] for d in cur.description]
+        appeared = [dict(zip(app_cols, r, strict=False)) for r in await cur.fetchall()]
 
     return {
         "from_date": from_date,
@@ -512,10 +505,9 @@ async def list_cycles():
     frozen = get_frozen_cycles()
 
     # Also gather live cycles from roadmap_item tags
-    async with get_async_conn() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute("SELECT DISTINCT unnest(tags) AS tag FROM roadmap_item")
-            all_tags = [r[0] for r in await cur.fetchall()]
+    async with get_async_conn() as conn, conn.cursor() as cur:
+        await cur.execute("SELECT DISTINCT unnest(tags) AS tag FROM roadmap_item")
+        all_tags = [r[0] for r in await cur.fetchall()]
 
     live_cycles = sorted(
         [t for t in all_tags if CYCLE_RE.match(t)],
@@ -607,18 +599,17 @@ async def get_frozen_cycle_items(cycle: str):
     if cycle not in frozen:
         raise HTTPException(status_code=404, detail=f"Cycle {cycle} is not frozen")
 
-    async with get_async_conn() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute(
-                "SELECT jira_key, title, status, color_status, url, "
-                "       product_name, department, parent_key, parent_summary, "
-                "       rank, parent_rank, tags "
-                "FROM cycle_freeze_item WHERE cycle = %s "
-                "ORDER BY parent_rank NULLS LAST, rank NULLS LAST, title",
-                (cycle,),
-            )
-            columns = [desc[0] for desc in cur.description]
-            rows = await cur.fetchall()
+    async with get_async_conn() as conn, conn.cursor() as cur:
+        await cur.execute(
+            "SELECT jira_key, title, status, color_status, url, "
+            "       product_name, department, parent_key, parent_summary, "
+            "       rank, parent_rank, tags "
+            "FROM cycle_freeze_item WHERE cycle = %s "
+            "ORDER BY parent_rank NULLS LAST, rank NULLS LAST, title",
+            (cycle,),
+        )
+        columns = [desc[0] for desc in cur.description]
+        rows = await cur.fetchall()
 
     return {
         "data": [dict(zip(columns, row, strict=False)) for row in rows],
@@ -656,11 +647,10 @@ async def get_roadmap(
         "ORDER BY r.updated_at DESC"
     )
 
-    async with get_async_conn() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute(query, params)
-            columns = [desc[0] for desc in cur.description]
-            rows = await cur.fetchall()
+    async with get_async_conn() as conn, conn.cursor() as cur:
+        await cur.execute(query, params)
+        columns = [desc[0] for desc in cur.description]
+        rows = await cur.fetchall()
 
     return {"data": [dict(zip(columns, row, strict=False)) for row in rows], "meta": {"total": len(rows)}}
 
@@ -668,6 +658,7 @@ async def get_roadmap(
 # ---------------------------------------------------------------------------
 # Product CRUD — /api/v1/products
 # ---------------------------------------------------------------------------
+
 
 class JiraSourceIn(BaseModel):
     """Input schema for a Jira source rule within a product."""
@@ -743,20 +734,18 @@ async def _fetch_product_with_sources(cur, product_id: int) -> dict | None:
 @app.get("/api/v1/products", tags=["Products"])
 async def list_products():
     """List all products with their Jira source mappings."""
-    async with get_async_conn() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute("SELECT id FROM product ORDER BY department, name")
-            product_ids = [r[0] for r in await cur.fetchall()]
-            products = [await _fetch_product_with_sources(cur, pid) for pid in product_ids]
+    async with get_async_conn() as conn, conn.cursor() as cur:
+        await cur.execute("SELECT id FROM product ORDER BY department, name")
+        product_ids = [r[0] for r in await cur.fetchall()]
+        products = [await _fetch_product_with_sources(cur, pid) for pid in product_ids]
     return {"data": products, "meta": {"total": len(products)}}
 
 
 @app.get("/api/v1/products/{product_id}", tags=["Products"])
 async def get_product(product_id: int):
     """Get a single product by ID."""
-    async with get_async_conn() as conn:
-        async with conn.cursor() as cur:
-            product = await _fetch_product_with_sources(cur, product_id)
+    async with get_async_conn() as conn, conn.cursor() as cur:
+        product = await _fetch_product_with_sources(cur, product_id)
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
     return {"data": product}
@@ -765,34 +754,33 @@ async def get_product(product_id: int):
 @app.post("/api/v1/products", status_code=201, tags=["Products"])
 async def create_product(body: ProductIn):
     """Create a product with optional Jira source mappings."""
-    async with get_async_conn() as conn:
-        async with conn.cursor() as cur:
+    async with get_async_conn() as conn, conn.cursor() as cur:
+        await cur.execute(
+            "INSERT INTO product (name, department) VALUES (%s, %s) RETURNING id",
+            (body.name, body.department),
+        )
+        product_id = (await cur.fetchone())[0]
+
+        for src in body.jira_sources:
             await cur.execute(
-                "INSERT INTO product (name, department) VALUES (%s, %s) RETURNING id",
-                (body.name, body.department),
+                "INSERT INTO product_jira_source "
+                "  (product_id, jira_project_key, include_components, exclude_components, "
+                "   include_labels, exclude_labels, include_teams, exclude_teams) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                (
+                    product_id,
+                    src.jira_project_key,
+                    src.include_components,
+                    src.exclude_components,
+                    src.include_labels,
+                    src.exclude_labels,
+                    src.include_teams,
+                    src.exclude_teams,
+                ),
             )
-            product_id = (await cur.fetchone())[0]
 
-            for src in body.jira_sources:
-                await cur.execute(
-                    "INSERT INTO product_jira_source "
-                    "  (product_id, jira_project_key, include_components, exclude_components, "
-                    "   include_labels, exclude_labels, include_teams, exclude_teams) "
-                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                    (
-                        product_id,
-                        src.jira_project_key,
-                        src.include_components,
-                        src.exclude_components,
-                        src.include_labels,
-                        src.exclude_labels,
-                        src.include_teams,
-                        src.exclude_teams,
-                    ),
-                )
-
-            await conn.commit()
-            product = await _fetch_product_with_sources(cur, product_id)
+        await conn.commit()
+        product = await _fetch_product_with_sources(cur, product_id)
 
     return {"data": product}
 
@@ -800,39 +788,38 @@ async def create_product(body: ProductIn):
 @app.put("/api/v1/products/{product_id}", tags=["Products"])
 async def update_product(product_id: int, body: ProductIn):
     """Replace a product's details and Jira source mappings entirely."""
-    async with get_async_conn() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute("SELECT id FROM product WHERE id = %s", (product_id,))
-            if not await cur.fetchone():
-                raise HTTPException(status_code=404, detail="Product not found")
+    async with get_async_conn() as conn, conn.cursor() as cur:
+        await cur.execute("SELECT id FROM product WHERE id = %s", (product_id,))
+        if not await cur.fetchone():
+            raise HTTPException(status_code=404, detail="Product not found")
 
+        await cur.execute(
+            "UPDATE product SET name = %s, department = %s, updated_at = now() WHERE id = %s",
+            (body.name, body.department, product_id),
+        )
+
+        # Replace all source rules (simple and safe for small cardinality)
+        await cur.execute("DELETE FROM product_jira_source WHERE product_id = %s", (product_id,))
+        for src in body.jira_sources:
             await cur.execute(
-                "UPDATE product SET name = %s, department = %s, updated_at = now() WHERE id = %s",
-                (body.name, body.department, product_id),
+                "INSERT INTO product_jira_source "
+                "  (product_id, jira_project_key, include_components, exclude_components, "
+                "   include_labels, exclude_labels, include_teams, exclude_teams) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                (
+                    product_id,
+                    src.jira_project_key,
+                    src.include_components,
+                    src.exclude_components,
+                    src.include_labels,
+                    src.exclude_labels,
+                    src.include_teams,
+                    src.exclude_teams,
+                ),
             )
 
-            # Replace all source rules (simple and safe for small cardinality)
-            await cur.execute("DELETE FROM product_jira_source WHERE product_id = %s", (product_id,))
-            for src in body.jira_sources:
-                await cur.execute(
-                    "INSERT INTO product_jira_source "
-                    "  (product_id, jira_project_key, include_components, exclude_components, "
-                    "   include_labels, exclude_labels, include_teams, exclude_teams) "
-                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                    (
-                        product_id,
-                        src.jira_project_key,
-                        src.include_components,
-                        src.exclude_components,
-                        src.include_labels,
-                        src.exclude_labels,
-                        src.include_teams,
-                        src.exclude_teams,
-                    ),
-                )
-
-            await conn.commit()
-            product = await _fetch_product_with_sources(cur, product_id)
+        await conn.commit()
+        product = await _fetch_product_with_sources(cur, product_id)
 
     return {"data": product}
 
@@ -843,16 +830,15 @@ async def delete_product(product_id: int):
 
     Roadmap items referencing this product will have their product_id set to NULL.
     """
-    async with get_async_conn() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute("SELECT id FROM product WHERE id = %s", (product_id,))
-            if not await cur.fetchone():
-                raise HTTPException(status_code=404, detail="Product not found")
+    async with get_async_conn() as conn, conn.cursor() as cur:
+        await cur.execute("SELECT id FROM product WHERE id = %s", (product_id,))
+        if not await cur.fetchone():
+            raise HTTPException(status_code=404, detail="Product not found")
 
-            # Unlink roadmap items so they don't get cascade-deleted
-            await cur.execute("UPDATE roadmap_item SET product_id = NULL WHERE product_id = %s", (product_id,))
-            await cur.execute("DELETE FROM product WHERE id = %s", (product_id,))
-            await conn.commit()
+        # Unlink roadmap items so they don't get cascade-deleted
+        await cur.execute("UPDATE roadmap_item SET product_id = NULL WHERE product_id = %s", (product_id,))
+        await cur.execute("DELETE FROM product WHERE id = %s", (product_id,))
+        await conn.commit()
 
     return None
 
@@ -871,42 +857,41 @@ async def _query_filter_options(department: str | None = None) -> dict:
     frontend can dynamically update the product dropdown when the department changes,
     and a ``cycle_states`` mapping (cycle → state) from ``cycle_config``.
     """
-    async with get_async_conn() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute("SELECT DISTINCT department FROM product ORDER BY department")
-            departments = [r[0] for r in await cur.fetchall()]
+    async with get_async_conn() as conn, conn.cursor() as cur:
+        await cur.execute("SELECT DISTINCT department FROM product ORDER BY department")
+        departments = [r[0] for r in await cur.fetchall()]
 
-            # Products for the selected department (or all if none selected)
-            if department:
-                await cur.execute("SELECT DISTINCT name FROM product WHERE department = %s ORDER BY name", (department,))
-            else:
-                await cur.execute("SELECT DISTINCT name FROM product ORDER BY name")
-            products = [r[0] for r in await cur.fetchall()]
+        # Products for the selected department (or all if none selected)
+        if department:
+            await cur.execute("SELECT DISTINCT name FROM product WHERE department = %s ORDER BY name", (department,))
+        else:
+            await cur.execute("SELECT DISTINCT name FROM product ORDER BY name")
+        products = [r[0] for r in await cur.fetchall()]
 
-            # Full department → products mapping for client-side filtering
-            await cur.execute("SELECT department, name FROM product ORDER BY department, name")
-            dept_products: dict[str, list[str]] = {}
-            for r in await cur.fetchall():
-                dept_products.setdefault(r[0], []).append(r[1])
+        # Full department → products mapping for client-side filtering
+        await cur.execute("SELECT department, name FROM product ORDER BY department, name")
+        dept_products: dict[str, list[str]] = {}
+        for r in await cur.fetchall():
+            dept_products.setdefault(r[0], []).append(r[1])
 
-            # Cycles come from the tags array (labels) on roadmap_item.
-            # unnest expands the array; we then filter for XX.XX pattern in Python.
-            # Also include cycles that exist in cycle_config or cycle_freeze.
-            await cur.execute("SELECT DISTINCT unnest(tags) AS tag FROM roadmap_item")
-            all_tags = [r[0] for r in await cur.fetchall()]
-            live_cycles = {t for t in all_tags if CYCLE_RE.match(t)}
+        # Cycles come from the tags array (labels) on roadmap_item.
+        # unnest expands the array; we then filter for XX.XX pattern in Python.
+        # Also include cycles that exist in cycle_config or cycle_freeze.
+        await cur.execute("SELECT DISTINCT unnest(tags) AS tag FROM roadmap_item")
+        all_tags = [r[0] for r in await cur.fetchall()]
+        live_cycles = {t for t in all_tags if CYCLE_RE.match(t)}
 
-            await cur.execute("SELECT cycle FROM cycle_freeze")
-            frozen_cycles = {r[0] for r in await cur.fetchall()}
+        await cur.execute("SELECT cycle FROM cycle_freeze")
+        frozen_cycles = {r[0] for r in await cur.fetchall()}
 
-            await cur.execute("SELECT cycle FROM cycle_config")
-            config_cycles = {r[0] for r in await cur.fetchall()}
+        await cur.execute("SELECT cycle FROM cycle_config")
+        config_cycles = {r[0] for r in await cur.fetchall()}
 
-            cycles = sorted(live_cycles | frozen_cycles | config_cycles, reverse=True)
+        cycles = sorted(live_cycles | frozen_cycles | config_cycles, reverse=True)
 
-            # Cycle state map for UI badges
-            await cur.execute("SELECT cycle, state FROM cycle_config")
-            cycle_states = {r[0]: r[1] for r in await cur.fetchall()}
+        # Cycle state map for UI badges
+        await cur.execute("SELECT cycle, state FROM cycle_config")
+        cycle_states = {r[0]: r[1] for r in await cur.fetchall()}
 
     return {
         "departments": departments,
@@ -942,11 +927,10 @@ async def _query_frozen_items_for_cycle(
         "ORDER BY f.parent_rank NULLS LAST, f.rank NULLS LAST, f.title"
     )
 
-    async with get_async_conn() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute(query, params)
-            columns = [desc[0] for desc in cur.description]
-            rows = await cur.fetchall()
+    async with get_async_conn() as conn, conn.cursor() as cur:
+        await cur.execute(query, params)
+        columns = [desc[0] for desc in cur.description]
+        rows = await cur.fetchall()
 
     items = []
     for row in rows:
@@ -1006,11 +990,10 @@ async def _query_roadmap_items(
         "ORDER BY r.parent_rank NULLS LAST, r.rank NULLS LAST, r.title"
     )
 
-    async with get_async_conn() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute(query, params)
-            columns = [desc[0] for desc in cur.description]
-            rows = await cur.fetchall()
+    async with get_async_conn() as conn, conn.cursor() as cur:
+        await cur.execute(query, params)
+        columns = [desc[0] for desc in cur.description]
+        rows = await cur.fetchall()
 
     # Build cycle → objective → items mapping
     raw: dict[str, dict[str, list[dict]]] = {}
@@ -1155,7 +1138,9 @@ async def roadmap_page(
             cycle = current[0]
 
     grouped_items, objective_urls, cycle_states = await _query_roadmap_items(
-        department=department, product=product, cycle=cycle,
+        department=department,
+        product=product,
+        cycle=cycle,
     )
 
     return templates.TemplateResponse(

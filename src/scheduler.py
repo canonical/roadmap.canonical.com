@@ -90,8 +90,7 @@ def _run_sync(interval: int) -> None:
         snapshot_count = take_daily_snapshot()
         logger.info("Phase 3 complete — snapshot %d items", snapshot_count)
 
-        logger.info("Sync finished — fetched=%d, processed=%d, snapshot=%d",
-                     fetched, processed, snapshot_count)
+        logger.info("Sync finished — fetched=%d, processed=%d, snapshot=%d", fetched, processed, snapshot_count)
         _update_sync_metadata(finished=True, ok=True, interval=interval)
     except Exception as exc:
         logger.exception("Sync failed")

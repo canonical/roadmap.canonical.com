@@ -1,7 +1,5 @@
 """Tests for the Jira sync pipeline (Phase 2 only — no live Jira calls)."""
 
-import json
-
 import pytest
 from psycopg.types.json import Jsonb
 
@@ -72,9 +70,7 @@ def test_process_extracts_parent():
     process_raw_jira_data()
 
     with get_db_connection() as conn, conn.cursor() as cur:
-        cur.execute(
-            "SELECT parent_key, parent_summary FROM roadmap_item WHERE jira_key = 'MOCK-P1'"
-        )
+        cur.execute("SELECT parent_key, parent_summary FROM roadmap_item WHERE jira_key = 'MOCK-P1'")
         row = cur.fetchone()
 
     assert row is not None
@@ -96,9 +92,7 @@ def test_process_no_parent():
     process_raw_jira_data()
 
     with get_db_connection() as conn, conn.cursor() as cur:
-        cur.execute(
-            "SELECT parent_key, parent_summary FROM roadmap_item WHERE jira_key = 'MOCK-P2'"
-        )
+        cur.execute("SELECT parent_key, parent_summary FROM roadmap_item WHERE jira_key = 'MOCK-P2'")
         row = cur.fetchone()
 
     assert row is not None
@@ -191,6 +185,7 @@ def test_process_falls_back_to_uncategorized():
 # Unit tests for _match_issue_to_product
 # ---------------------------------------------------------------------------
 
+
 def test_match_simple_project():
     """A rule with only project key matches any issue in that project."""
     rules = [JiraSourceRule(product_id=1, jira_project_key="LXD")]
@@ -254,44 +249,102 @@ def test_match_exclude_teams():
 
 def test_match_combined_filters():
     """Multiple filters on a single rule are AND-ed together."""
-    rules = [JiraSourceRule(
-        product_id=1,
-        jira_project_key="PROJ",
-        include_components=["Web"],
-        exclude_components=["Legacy"],
-        include_labels=["roadmap"],
-        exclude_labels=["internal"],
-        include_teams=["Frontend"],
-        exclude_teams=["QA"],
-    )]
+    rules = [
+        JiraSourceRule(
+            product_id=1,
+            jira_project_key="PROJ",
+            include_components=["Web"],
+            exclude_components=["Legacy"],
+            include_labels=["roadmap"],
+            exclude_labels=["internal"],
+            include_teams=["Frontend"],
+            exclude_teams=["QA"],
+        )
+    ]
     # All conditions met
-    assert _match_issue_to_product(
-        "PROJ", ["Web"], ["roadmap"], ["Frontend"], rules, fallback_product_id=99,
-    ) == 1
+    assert (
+        _match_issue_to_product(
+            "PROJ",
+            ["Web"],
+            ["roadmap"],
+            ["Frontend"],
+            rules,
+            fallback_product_id=99,
+        )
+        == 1
+    )
     # Missing required label
-    assert _match_issue_to_product(
-        "PROJ", ["Web"], [], ["Frontend"], rules, fallback_product_id=99,
-    ) == 99
+    assert (
+        _match_issue_to_product(
+            "PROJ",
+            ["Web"],
+            [],
+            ["Frontend"],
+            rules,
+            fallback_product_id=99,
+        )
+        == 99
+    )
     # Has excluded component
-    assert _match_issue_to_product(
-        "PROJ", ["Web", "Legacy"], ["roadmap"], ["Frontend"], rules, fallback_product_id=99,
-    ) == 99
+    assert (
+        _match_issue_to_product(
+            "PROJ",
+            ["Web", "Legacy"],
+            ["roadmap"],
+            ["Frontend"],
+            rules,
+            fallback_product_id=99,
+        )
+        == 99
+    )
     # Missing required component
-    assert _match_issue_to_product(
-        "PROJ", ["API"], ["roadmap"], ["Frontend"], rules, fallback_product_id=99,
-    ) == 99
+    assert (
+        _match_issue_to_product(
+            "PROJ",
+            ["API"],
+            ["roadmap"],
+            ["Frontend"],
+            rules,
+            fallback_product_id=99,
+        )
+        == 99
+    )
     # Has excluded label
-    assert _match_issue_to_product(
-        "PROJ", ["Web"], ["roadmap", "internal"], ["Frontend"], rules, fallback_product_id=99,
-    ) == 99
+    assert (
+        _match_issue_to_product(
+            "PROJ",
+            ["Web"],
+            ["roadmap", "internal"],
+            ["Frontend"],
+            rules,
+            fallback_product_id=99,
+        )
+        == 99
+    )
     # Has excluded team
-    assert _match_issue_to_product(
-        "PROJ", ["Web"], ["roadmap"], ["Frontend", "QA"], rules, fallback_product_id=99,
-    ) == 99
+    assert (
+        _match_issue_to_product(
+            "PROJ",
+            ["Web"],
+            ["roadmap"],
+            ["Frontend", "QA"],
+            rules,
+            fallback_product_id=99,
+        )
+        == 99
+    )
     # Missing required team
-    assert _match_issue_to_product(
-        "PROJ", ["Web"], ["roadmap"], ["Backend"], rules, fallback_product_id=99,
-    ) == 99
+    assert (
+        _match_issue_to_product(
+            "PROJ",
+            ["Web"],
+            ["roadmap"],
+            ["Backend"],
+            rules,
+            fallback_product_id=99,
+        )
+        == 99
+    )
 
 
 def test_match_first_rule_wins():
