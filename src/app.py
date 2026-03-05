@@ -863,9 +863,7 @@ async def _query_filter_options(department: str | None = None) -> dict:
 
         # Products for the selected department (or all if none selected)
         if department:
-            await cur.execute(
-                "SELECT DISTINCT name FROM product WHERE department = %s ORDER BY name", (department,)
-            )
+            await cur.execute("SELECT DISTINCT name FROM product WHERE department = %s ORDER BY name", (department,))
         else:
             await cur.execute("SELECT DISTINCT name FROM product ORDER BY name")
         products = [r[0] for r in await cur.fetchall()]

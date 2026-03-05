@@ -1,6 +1,5 @@
 """Tests for the cycle lifecycle management (cycle_config + freeze/unfreeze)."""
 
-
 import pytest
 from psycopg.types.json import Jsonb
 

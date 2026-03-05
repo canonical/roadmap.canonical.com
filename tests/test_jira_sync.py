@@ -1,6 +1,5 @@
 """Tests for the Jira sync pipeline (Phase 2 only — no live Jira calls)."""
 
-
 import pytest
 from psycopg.types.json import Jsonb
 

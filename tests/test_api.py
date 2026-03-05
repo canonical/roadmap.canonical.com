@@ -1,6 +1,5 @@
 """Tests for /api/v1/* endpoints."""
 
-
 from psycopg.types.json import Jsonb
 
 from src.database import get_db_connection
