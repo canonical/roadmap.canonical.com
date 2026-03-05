@@ -98,8 +98,7 @@
           <span class="p-badge">{{ items | length }}</span>
         </h4>
 
-        <table class="p-table--sortable" role="grid" style="table-layout:fixed;max-width:50rem;">
-          <tbody>
+        <ul class="epic-list">
             {% for item in items %}
             {% set health_color = item.color_status.health.color if item.color_status and item.color_status.health else 'white' %}
             {% set health_label = item.color_status.health.get('label', '') if item.color_status and item.color_status.health else '' %}
@@ -118,8 +117,8 @@
             {% else %}
               {% set health_id = 'unknown' %}
             {% endif %}
-            <tr data-health="{{ health_id }}">
-              <td style="width:4rem">
+            <li class="epic-row" data-health="{{ health_id }}">
+              <span class="epic-row__carry-over">
                 {% if item.color_status and item.color_status.carry_over %}
                   {% if item.color_status.carry_over.count > 1 %}
                     <span class="carry-over-badge">{{ item.color_status.carry_over.count }}</span>
@@ -127,24 +126,23 @@
                     <span class="carry-over-badge">&nbsp;</span>
                   {% endif %}
                 {% endif %}
-              </td>
-              <td style="width:3.5rem">
+              </span>
+              <span class="epic-row__health">
                 {% if item.color_status and item.color_status.health %}
                   <span class="color-cell color-cell--{{ item.color_status.health.color }}">
                     {{- item.color_status.health.get('label', '') -}}
                   </span>
                 {% endif %}
-              </td>
-              <td class="summary-cell">
+              </span>
+              <span class="epic-row__summary">
                 <a href="{{ item.url }}" target="_blank" rel="noopener" class="jira-link summary-link">
                   {{ item.title | truncate(90, True, '…') }}
                   <i class="p-icon--external-link"></i>
                 </a>
-              </td>
-            </tr>
+              </span>
+            </li>
             {% endfor %}
-          </tbody>
-        </table>
+        </ul>
       </div>
       {% endfor %}
     </div>
@@ -200,7 +198,7 @@
   (function() {
     var activeFilters = new Set();
     var legendItems = document.querySelectorAll('.legend-filter[data-health]');
-    var allRows = document.querySelectorAll('tr[data-health]');
+    var allRows = document.querySelectorAll('li[data-health]');
 
     function updateStats() {
       // Count ALL rows per health status (ignores legend toggle visibility)
@@ -250,7 +248,7 @@
 
       // Update item counts in objective headers
       document.querySelectorAll('.product-column').forEach(function(col) {
-        var rows = col.querySelectorAll('tr[data-health]');
+        var rows = col.querySelectorAll('li[data-health]');
         var visible = 0;
         rows.forEach(function(r) { if (r.style.display !== 'none') visible++; });
         var badge = col.querySelector('h4 .p-badge');
