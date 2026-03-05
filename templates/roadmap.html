@@ -99,13 +99,6 @@
         </h4>
 
         <table class="p-table--sortable" role="grid" style="table-layout:fixed;max-width:50rem;">
-          <thead>
-            <tr>
-              <th style="width:4rem">Carry-over</th>
-              <th style="width:3.5rem"></th>
-              <th>Summary</th>
-            </tr>
-          </thead>
           <tbody>
             {% for item in items %}
             {% set health_color = item.color_status.health.color if item.color_status and item.color_status.health else 'white' %}
@@ -126,7 +119,7 @@
               {% set health_id = 'unknown' %}
             {% endif %}
             <tr data-health="{{ health_id }}">
-              <td>
+              <td style="width:4rem">
                 {% if item.color_status and item.color_status.carry_over %}
                   {% if item.color_status.carry_over.count > 1 %}
                     <span class="carry-over-badge">{{ item.color_status.carry_over.count }}</span>
@@ -135,7 +128,7 @@
                   {% endif %}
                 {% endif %}
               </td>
-              <td>
+              <td style="width:3.5rem">
                 {% if item.color_status and item.color_status.health %}
                   <span class="color-cell color-cell--{{ item.color_status.health.color }}">
                     {{- item.color_status.health.get('label', '') -}}
