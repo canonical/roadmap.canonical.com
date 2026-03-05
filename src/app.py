@@ -605,7 +605,8 @@ async def get_frozen_cycle_items(cycle: str):
             "       product_name, department, parent_key, parent_summary, "
             "       rank, parent_rank, tags "
             "FROM cycle_freeze_item WHERE cycle = %s "
-            "ORDER BY parent_rank NULLS LAST, rank NULLS LAST, title",
+            "ORDER BY NULLIF(parent_rank, '') NULLS LAST, "
+            "         NULLIF(rank, '') NULLS LAST, title",
             (cycle,),
         )
         columns = [desc[0] for desc in cur.description]
@@ -924,7 +925,8 @@ async def _query_frozen_items_for_cycle(
         "       f.color_status, f.url, f.tags, "
         "       f.parent_key, f.parent_summary, f.rank, f.parent_rank "
         f"FROM cycle_freeze_item f{where} "
-        "ORDER BY f.parent_rank NULLS LAST, f.rank NULLS LAST, f.title"
+        "ORDER BY NULLIF(f.parent_rank, '') NULLS LAST, "
+        "         NULLIF(f.rank, '') NULLS LAST, f.title"
     )
 
     async with get_async_conn() as conn, conn.cursor() as cur:
@@ -987,7 +989,8 @@ async def _query_roadmap_items(
         "       r.parent_key, r.parent_summary, r.rank, r.parent_rank "
         "FROM roadmap_item r "
         f"JOIN product p ON p.id = r.product_id{where} "
-        "ORDER BY r.parent_rank NULLS LAST, r.rank NULLS LAST, r.title"
+        "ORDER BY NULLIF(r.parent_rank, '') NULLS LAST, "
+        "         NULLIF(r.rank, '') NULLS LAST, r.title"
     )
 
     async with get_async_conn() as conn, conn.cursor() as cur:
@@ -1100,7 +1103,8 @@ async def _query_roadmap_items(
             item["_objective"] = objective_label
             raw.setdefault(fc, {}).setdefault(objective_label, []).append(item)
 
-    # Sort: cycles newest-first, objectives by parent_rank ("No objective" last)
+    # Sort: cycles newest-first, objectives by parent_rank ("No objective" last),
+    # then epics within each objective by their own rank.
     grouped: OrderedDict[str, OrderedDict[str, list[dict]]] = OrderedDict()
     for c in sorted(raw.keys(), reverse=True):
         objectives = raw[c]
@@ -1111,7 +1115,12 @@ async def _query_roadmap_items(
                 min((item.get("parent_rank") or "\xff") for item in objectives[k]),
             ),
         )
-        grouped[c] = OrderedDict((k, objectives[k]) for k in sorted_keys)
+        grouped[c] = OrderedDict()
+        for k in sorted_keys:
+            grouped[c][k] = sorted(
+                objectives[k],
+                key=lambda item: (item.get("rank") or "\xff", item.get("title") or ""),
+            )
 
     return grouped, objective_urls, cycle_states_in_view
 
