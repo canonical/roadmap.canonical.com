@@ -10,7 +10,6 @@ Two-phase approach:
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 from dataclasses import dataclass, field
@@ -47,9 +46,7 @@ def _build_jql() -> str:
         cur.execute("SELECT DISTINCT jira_project_key FROM product_jira_source ORDER BY jira_project_key")
         project_keys = [row[0] for row in cur.fetchall()]
 
-        cur.execute(
-            "SELECT cycle FROM cycle_config WHERE state IN ('current', 'future') ORDER BY cycle"
-        )
+        cur.execute("SELECT cycle FROM cycle_config WHERE state IN ('current', 'future') ORDER BY cycle")
         cycle_labels = [row[0] for row in cur.fetchall()]
 
     if not project_keys:
@@ -149,6 +146,7 @@ def sync_jira_data() -> int:
 # Product mapping helpers
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class JiraSourceRule:
     """A single Jira project → product mapping rule with optional filters."""
@@ -173,16 +171,18 @@ def _load_source_rules(cursor) -> list[JiraSourceRule]:
     )
     rules = []
     for row in cursor.fetchall():
-        rules.append(JiraSourceRule(
-            product_id=row[0],
-            jira_project_key=row[1],
-            include_components=row[2] or [],
-            exclude_components=row[3] or [],
-            include_labels=row[4] or [],
-            exclude_labels=row[5] or [],
-            include_teams=row[6] or [],
-            exclude_teams=row[7] or [],
-        ))
+        rules.append(
+            JiraSourceRule(
+                product_id=row[0],
+                jira_project_key=row[1],
+                include_components=row[2] or [],
+                exclude_components=row[3] or [],
+                include_labels=row[4] or [],
+                exclude_labels=row[5] or [],
+                include_teams=row[6] or [],
+                exclude_teams=row[7] or [],
+            )
+        )
     return rules
 
 
@@ -243,6 +243,7 @@ def _match_issue_to_product(
 # Phase 2 — process raw → roadmap_item
 # ---------------------------------------------------------------------------
 
+
 def process_raw_jira_data() -> int:
     """Transform unprocessed raw issues into roadmap_items.
 
@@ -261,9 +262,7 @@ def process_raw_jira_data() -> int:
                 fields = raw_data["fields"]
                 jira_project = jira_key.split("-")[0]
 
-                issue_components = [
-                    c["name"] for c in (fields.get("components") or []) if isinstance(c, dict)
-                ]
+                issue_components = [c["name"] for c in (fields.get("components") or []) if isinstance(c, dict)]
                 issue_labels = fields.get("labels") or []
 
                 # Jira "team" can live in customfield_10001 (Team) or similar — extract name
@@ -271,14 +270,17 @@ def process_raw_jira_data() -> int:
                 if isinstance(team_field, dict):
                     issue_teams = [team_field.get("name") or team_field.get("value", "")]
                 elif isinstance(team_field, list):
-                    issue_teams = [
-                        t.get("name") or t.get("value", "") for t in team_field if isinstance(t, dict)
-                    ]
+                    issue_teams = [t.get("name") or t.get("value", "") for t in team_field if isinstance(t, dict)]
                 else:
                     issue_teams = []
 
                 product_id = _match_issue_to_product(
-                    jira_project, issue_components, issue_labels, issue_teams, rules, fallback_id,
+                    jira_project,
+                    issue_components,
+                    issue_labels,
+                    issue_teams,
+                    rules,
+                    fallback_id,
                 )
 
                 color_status = calculate_epic_color(fields)
@@ -518,9 +520,7 @@ def get_frozen_cycles() -> dict[str, dict]:
         ``{"25.10": {"frozen_at": "...", "frozen_by": "...", "note": "..."}, ...}``
     """
     with get_db_connection() as conn, conn.cursor() as cur:
-        cur.execute(
-            "SELECT cycle, frozen_at, frozen_by, note FROM cycle_freeze ORDER BY cycle DESC"
-        )
+        cur.execute("SELECT cycle, frozen_at, frozen_by, note FROM cycle_freeze ORDER BY cycle DESC")
         return {
             row[0]: {
                 "frozen_at": row[1].isoformat() if row[1] else None,
@@ -543,10 +543,7 @@ def get_cycle_configs() -> dict[str, dict]:
         ``{"25.10": {"state": "frozen", "updated_at": "...", "updated_by": "..."}, ...}``
     """
     with get_db_connection() as conn, conn.cursor() as cur:
-        cur.execute(
-            "SELECT cycle, state, updated_at, updated_by "
-            "FROM cycle_config ORDER BY cycle DESC"
-        )
+        cur.execute("SELECT cycle, state, updated_at, updated_by FROM cycle_config ORDER BY cycle DESC")
         return {
             row[0]: {
                 "state": row[1],
@@ -590,10 +587,7 @@ def register_cycle(cycle: str, state: str, updated_by: str | None = None) -> dic
                 cur.execute("SELECT cycle FROM cycle_config WHERE state = 'current'")
                 existing = cur.fetchone()
                 if existing:
-                    raise RuntimeError(
-                        f"Cannot register {cycle} as current — "
-                        f"cycle {existing[0]} is already current"
-                    )
+                    raise RuntimeError(f"Cannot register {cycle} as current — cycle {existing[0]} is already current")
 
             cur.execute(
                 "INSERT INTO cycle_config (cycle, state, updated_by) VALUES (%s, %s, %s)",
@@ -654,10 +648,7 @@ def set_cycle_state(cycle: str, new_state: str, updated_by: str | None = None) -
                 )
                 existing = cur.fetchone()
                 if existing:
-                    raise RuntimeError(
-                        f"Cannot set {cycle} to current — "
-                        f"cycle {existing[0]} is already current"
-                    )
+                    raise RuntimeError(f"Cannot set {cycle} to current — cycle {existing[0]} is already current")
 
             # Side effects: leaving frozen → delete snapshot
             if old_state == "frozen":
@@ -668,8 +659,7 @@ def set_cycle_state(cycle: str, new_state: str, updated_by: str | None = None) -
                 _ensure_freeze_snapshot(cur, cycle, updated_by)
 
             cur.execute(
-                "UPDATE cycle_config SET state = %s, updated_at = now(), updated_by = %s "
-                "WHERE cycle = %s",
+                "UPDATE cycle_config SET state = %s, updated_at = now(), updated_by = %s WHERE cycle = %s",
                 (new_state, updated_by, cycle),
             )
         conn.commit()

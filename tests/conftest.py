@@ -34,7 +34,22 @@ def _setup_test_database():
     # Force settings to re-read from env
     import src.settings as settings_mod
     from src.settings import Settings
-    settings_mod.settings = Settings()
+
+    new_settings = Settings()
+    settings_mod.settings = new_settings
+
+    # Propagate to modules that did `from .settings import settings` at import time
+    import src.app
+    import src.auth
+    import src.database
+    import src.jira_sync
+    import src.scheduler
+
+    src.app.settings = new_settings
+    src.auth.settings = new_settings
+    src.database.settings = new_settings
+    src.jira_sync.settings = new_settings
+    src.scheduler.settings = new_settings
 
     from src.database import get_db_connection
 

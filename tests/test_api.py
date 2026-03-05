@@ -1,7 +1,5 @@
 """Tests for /api/v1/* endpoints."""
 
-import json
-
 from psycopg.types.json import Jsonb
 
 from src.database import get_db_connection
@@ -89,6 +87,7 @@ def test_status_endpoint(client):
 # Product CRUD tests
 # ---------------------------------------------------------------------------
 
+
 def test_list_products(client):
     """GET /api/v1/products returns the seeded Uncategorized product."""
     resp = client.get("/api/v1/products")
@@ -99,25 +98,28 @@ def test_list_products(client):
 
 def test_create_product(client):
     """POST /api/v1/products creates a product with Jira sources."""
-    resp = client.post("/api/v1/products", json={
-        "name": "MAAS",
-        "department": "Engineering",
-        "jira_sources": [
-            {
-                "jira_project_key": "MAAS",
-                "include_components": ["UI", "API"],
-                "exclude_components": None,
-                "include_labels": None,
-                "exclude_labels": None,
-                "include_teams": ["MAAS-team"],
-                "exclude_teams": None,
-            },
-            {
-                "jira_project_key": "SNAP",
-                "include_labels": ["maas-related"],
-            },
-        ],
-    })
+    resp = client.post(
+        "/api/v1/products",
+        json={
+            "name": "MAAS",
+            "department": "Engineering",
+            "jira_sources": [
+                {
+                    "jira_project_key": "MAAS",
+                    "include_components": ["UI", "API"],
+                    "exclude_components": None,
+                    "include_labels": None,
+                    "exclude_labels": None,
+                    "include_teams": ["MAAS-team"],
+                    "exclude_teams": None,
+                },
+                {
+                    "jira_project_key": "SNAP",
+                    "include_labels": ["maas-related"],
+                },
+            ],
+        },
+    )
     assert resp.status_code == 201
     product = resp.json()["data"]
     assert product["name"] == "MAAS"
@@ -148,21 +150,27 @@ def test_get_product_not_found(client):
 
 def test_update_product(client):
     """PUT /api/v1/products/{id} replaces product details and sources."""
-    create = client.post("/api/v1/products", json={
-        "name": "LXD",
-        "department": "Containers",
-        "jira_sources": [{"jira_project_key": "LXD"}],
-    })
+    create = client.post(
+        "/api/v1/products",
+        json={
+            "name": "LXD",
+            "department": "Containers",
+            "jira_sources": [{"jira_project_key": "LXD"}],
+        },
+    )
     pid = create.json()["data"]["id"]
 
-    resp = client.put(f"/api/v1/products/{pid}", json={
-        "name": "LXD",
-        "department": "Containers",
-        "jira_sources": [
-            {"jira_project_key": "LXD", "exclude_components": ["CI"]},
-            {"jira_project_key": "WD", "include_components": ["Anbox/LXD Tribe"]},
-        ],
-    })
+    resp = client.put(
+        f"/api/v1/products/{pid}",
+        json={
+            "name": "LXD",
+            "department": "Containers",
+            "jira_sources": [
+                {"jira_project_key": "LXD", "exclude_components": ["CI"]},
+                {"jira_project_key": "WD", "include_components": ["Anbox/LXD Tribe"]},
+            ],
+        },
+    )
     assert resp.status_code == 200
     product = resp.json()["data"]
     assert len(product["jira_sources"]) == 2
@@ -208,6 +216,7 @@ def test_delete_product_unlinks_roadmap_items(client):
 # HTML page tests
 # ---------------------------------------------------------------------------
 
+
 def test_roadmap_page_empty(client):
     """GET / returns an HTML page even with no data."""
     resp = client.get("/")
@@ -234,11 +243,12 @@ def test_roadmap_page_with_data(client):
             )
         conn.commit()
 
-    resp = client.get("/")
+    resp = client.get("/", params={"cycle": "25.10"})
     assert resp.status_code == 200
     assert "HTML-1" in resp.text
     assert "Render test" in resp.text
-    assert "Cycle 25.10" in resp.text
+    # Cycle appears in the filter dropdown (no longer as a heading)
+    assert "25.10" in resp.text
     assert "No objective" in resp.text
 
 
@@ -293,7 +303,7 @@ def test_roadmap_page_hides_items_without_cycle(client):
 
 
 def test_roadmap_page_item_in_multiple_cycles(client):
-    """An item with two cycle labels appears under both cycle headings."""
+    """An item with two cycle labels appears in cycle filter dropdown options."""
     color = Jsonb({"health": {"color": "green"}, "carry_over": {"color": "purple", "count": 1}})
     uncat_id = _get_uncategorized_id()
     with get_db_connection() as conn:
@@ -310,12 +320,14 @@ def test_roadmap_page_item_in_multiple_cycles(client):
             )
         conn.commit()
 
-    resp = client.get("/")
+    # Both cycles should be available in the filter dropdown
+    resp = client.get("/", params={"cycle": "25.10"})
     assert resp.status_code == 200
-    assert "Cycle 26.04" in resp.text
-    assert "Cycle 25.10" in resp.text
-    # The item should appear twice (once per cycle)
-    assert resp.text.count("MULTI-1") >= 2
+    assert "MULTI-1" in resp.text
+
+    resp = client.get("/", params={"cycle": "26.04"})
+    assert resp.status_code == 200
+    assert "MULTI-1" in resp.text
 
 
 def test_roadmap_page_filter_by_cycle(client):
@@ -339,8 +351,8 @@ def test_roadmap_page_filter_by_cycle(client):
     assert resp.status_code == 200
     assert "CY-2" in resp.text
     assert "CY-1" not in resp.text
-    assert "Cycle 26.04" in resp.text
-    assert "Cycle 25.10" not in resp.text
+    # Cycle value appears in the filter dropdown
+    assert "26.04" in resp.text
 
 
 def test_roadmap_page_filter_by_product(client):
@@ -350,8 +362,7 @@ def test_roadmap_page_filter_by_product(client):
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO product (name, department) VALUES ('Juju', 'Engineering') "
-                "ON CONFLICT (name) DO NOTHING"
+                "INSERT INTO product (name, department) VALUES ('Juju', 'Engineering') ON CONFLICT (name) DO NOTHING"
             )
             cur.execute("SELECT id FROM product WHERE name = 'Juju'")
             juju_id = cur.fetchone()[0]
