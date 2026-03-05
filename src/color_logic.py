@@ -40,8 +40,11 @@ def calculate_epic_color(
 
     Rules:
         - Multiple *cycle* labels (XX.XX pattern) → carry-over (purple badge).
-        - Custom field ``roadmap_state`` overrides health color.
-        - ``Done`` → green + completed label "C".
+        - ``Done`` has the **highest priority** and overrides any
+          ``roadmap_state`` — it produces green + "C", except when the
+          state is ``Added`` (blue), in which case it produces blue + "C".
+        - Custom field ``roadmap_state`` overrides health color for
+          non-Done items.
         - ``Rejected`` → red.
         - Active statuses (In Progress, In Review, …) → green.
         - Anything else → white (unknown / not started).
@@ -75,6 +78,8 @@ def calculate_epic_color(
             carry_over = {"color": "purple", "count": len(cycle_labels) - 1}
 
     # --- health color --------------------------------------------------------
+    # Done has the highest priority — it overrides any roadmap_state.
+    # Special case: Added (blue) + Done → blue with "C" label.
     state_color_map = {
         "At Risk": "orange",
         "Excluded": "red",
@@ -82,10 +87,10 @@ def calculate_epic_color(
         "Dropped": "black",
     }
 
-    if state and state in state_color_map:
+    if status_name == "Done":
+        health = {"color": "blue", "label": "C"} if state == "Added" else {"color": "green", "label": "C"}
+    elif state and state in state_color_map:
         health = {"color": state_color_map[state]}
-    elif status_name == "Done":
-        health = {"color": "green", "label": "C"}
     elif status_name == "Rejected":
         health = {"color": "red"}
     elif status_name in ("In Progress", "In Review", "To Be Deployed", "BLOCKED"):

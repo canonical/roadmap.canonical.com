@@ -198,3 +198,63 @@ def test_carry_over_current_cycle_ignores_non_cycle_labels():
     fields = {"status": {"name": "In Progress"}, "labels": ["25.04", "26.04", "ComponentPlatform", "Major"]}
     result = calculate_epic_color(fields, current_cycle="26.04")
     assert result["carry_over"] == {"color": "purple", "count": 1}
+
+
+# ---------------------------------------------------------------------------
+# Done overrides roadmap_state (highest priority)
+# ---------------------------------------------------------------------------
+
+
+def test_done_overrides_at_risk():
+    """Done + At Risk → green completed (Done has highest priority)."""
+    fields = {
+        "status": {"name": "Done"},
+        "customfield_10968": {"value": "At Risk"},
+        "labels": [],
+    }
+    result = calculate_epic_color(fields)
+    assert result["health"] == {"color": "green", "label": "C"}
+
+
+def test_done_overrides_excluded():
+    """Done + Excluded → green completed (Done has highest priority)."""
+    fields = {
+        "status": {"name": "Done"},
+        "customfield_10968": {"value": "🟥 Excluded"},
+        "labels": [],
+    }
+    result = calculate_epic_color(fields)
+    assert result["health"] == {"color": "green", "label": "C"}
+
+
+def test_done_overrides_dropped():
+    """Done + Dropped → green completed (Done has highest priority)."""
+    fields = {
+        "status": {"name": "Done"},
+        "customfield_10968": {"value": "Dropped"},
+        "labels": [],
+    }
+    result = calculate_epic_color(fields)
+    assert result["health"] == {"color": "green", "label": "C"}
+
+
+def test_done_with_added_state():
+    """Done + Added → blue completed (special case: blue + 'C' label)."""
+    fields = {
+        "status": {"name": "Done"},
+        "customfield_10968": {"value": "Added"},
+        "labels": [],
+    }
+    result = calculate_epic_color(fields)
+    assert result["health"] == {"color": "blue", "label": "C"}
+
+
+def test_done_with_added_emoji_state():
+    """Done + 🟦 Added → blue completed."""
+    fields = {
+        "status": {"name": "Done"},
+        "customfield_10968": {"value": "🟦 Added"},
+        "labels": [],
+    }
+    result = calculate_epic_color(fields)
+    assert result["health"] == {"color": "blue", "label": "C"}
