@@ -43,9 +43,10 @@ def calculate_epic_color(
         - ``Done`` has the **highest priority** and overrides any
           ``roadmap_state`` — it produces green + "C", except when the
           state is ``Added`` (blue), in which case it produces blue + "C".
+        - ``Dropped`` (black) is preserved even when ``Rejected``.
+        - ``Rejected`` overrides ``At Risk`` (orange) and ``Added`` (blue).
         - Custom field ``roadmap_state`` overrides health color for
-          non-Done items.
-        - ``Rejected`` → red.
+          remaining items.
         - Active statuses (In Progress, In Review, …) → green.
         - Anything else → white (unknown / not started).
     """
@@ -89,10 +90,12 @@ def calculate_epic_color(
 
     if status_name == "Done":
         health = {"color": "blue", "label": "C"} if state == "Added" else {"color": "green", "label": "C"}
-    elif state and state in state_color_map:
-        health = {"color": state_color_map[state]}
+    elif state == "Dropped":
+        health = {"color": "black"}
     elif status_name == "Rejected":
         health = {"color": "red"}
+    elif state and state in state_color_map:
+        health = {"color": state_color_map[state]}
     elif status_name in ("In Progress", "In Review", "To Be Deployed", "BLOCKED"):
         health = {"color": "green"}
     else:

@@ -258,3 +258,41 @@ def test_done_with_added_emoji_state():
     }
     result = calculate_epic_color(fields)
     assert result["health"] == {"color": "blue", "label": "C"}
+
+
+# ---------------------------------------------------------------------------
+# Rejected overrides orange and blue, but not black (Dropped)
+# ---------------------------------------------------------------------------
+
+
+def test_rejected_overrides_at_risk():
+    """Rejected + At Risk → red (Rejected wins over orange)."""
+    fields = {
+        "status": {"name": "Rejected"},
+        "customfield_10968": {"value": "At Risk"},
+        "labels": [],
+    }
+    result = calculate_epic_color(fields)
+    assert result["health"]["color"] == "red"
+
+
+def test_rejected_overrides_added():
+    """Rejected + Added → red (Rejected wins over blue)."""
+    fields = {
+        "status": {"name": "Rejected"},
+        "customfield_10968": {"value": "🟦 Added"},
+        "labels": [],
+    }
+    result = calculate_epic_color(fields)
+    assert result["health"]["color"] == "red"
+
+
+def test_rejected_does_not_override_dropped():
+    """Rejected + Dropped → black (Dropped is preserved)."""
+    fields = {
+        "status": {"name": "Rejected"},
+        "customfield_10968": {"value": "Dropped"},
+        "labels": [],
+    }
+    result = calculate_epic_color(fields)
+    assert result["health"]["color"] == "black"
