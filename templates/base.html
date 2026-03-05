@@ -11,16 +11,16 @@
   <style>
     /* ── colour cells ───────────────────────────────────────────────── */
     .color-cell {
-      width: 2rem;
-      height: 1.5rem;
-      border-radius: .25rem;
+      width: 1.6rem;
+      height: 1.2rem;
+      border-radius: .2rem;
       display: inline-block;
       vertical-align: middle;
       border: 1px solid rgba(0, 0, 0, .15);
       text-align: center;
-      font-size: .75rem;
+      font-size: .65rem;
       font-weight: 700;
-      line-height: 1.5rem;
+      line-height: 1.2rem;
       color: #fff;
     }
     .color-cell--green  { background-color: #0e8420; }
@@ -34,15 +34,15 @@
     /* ── carry-over badge ───────────────────────────────────────────── */
     .carry-over-badge {
       display: inline-block;
-      min-width: 1.5rem;
-      padding: 0 .35rem;
-      border-radius: .75rem;
+      min-width: 1.2rem;
+      padding: 0 .25rem;
+      border-radius: .6rem;
       background-color: #7c5295;
       color: #fff;
-      font-size: .75rem;
+      font-size: .65rem;
       font-weight: 600;
       text-align: center;
-      line-height: 1.5rem;
+      line-height: 1.2rem;
     }
 
     /* ── filter bar ─────────────────────────────────────────────────── */
@@ -63,37 +63,61 @@
     .cycle-header { min-width: 4rem; text-align: center; }
 
     /* ── cycle → objective layout ──────────────────────────────────── */
-    .cycle-section { margin-bottom: 2.5rem; }
-    .cycle-section h2 { margin-bottom: .75rem; }
+    .cycle-section { margin-bottom: 1.25rem; }
+    .cycle-section h2 { margin-bottom: .5rem; }
 
     .product-grid {
       display: flex;
       flex-direction: column;
-      gap: 1.5rem;
+      gap: .5rem;
     }
     .product-column {
       width: 100%;
     }
-    .product-column h4 { margin-bottom: .25rem; }
+    .product-column h4 { margin-bottom: .15rem; font-size: .95rem; }
 
-    /* ── summary truncation ─────────────────────────────────────────── */
-    .summary-cell {
+    /* ── compact epic rows (single-line flexbox) ────────────────────── */
+    .epic-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+    }
+    .epic-row {
+      display: flex;
+      align-items: center;
+      gap: .35rem;
+      padding: .15rem 0;
+      font-size: .8rem;
+      line-height: 1.3;
+      border-bottom: 1px solid rgba(0, 0, 0, .05);
+    }
+    .epic-row:last-child { border-bottom: none; }
+    .epic-row__carry-over {
+      flex: 0 0 1.5rem;
+      text-align: center;
+    }
+    .epic-row__health {
+      flex: 0 0 2rem;
+    }
+    .epic-row__summary {
+      flex: 1 1 auto;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+      min-width: 0;
     }
-    .summary-cell a.summary-link,
-    .summary-cell a.summary-link:visited,
-    .summary-cell a.summary-link:active {
+    .epic-row__summary a.summary-link,
+    .epic-row__summary a.summary-link:visited,
+    .epic-row__summary a.summary-link:active {
       display: inline-flex;
       align-items: center;
-      gap: .35rem;
+      gap: .25rem;
       color: #000;
       text-decoration: none;
       max-width: 100%;
       opacity: 1;
     }
-    .summary-cell a.summary-link:hover {
+    .epic-row__summary a.summary-link:hover {
       text-decoration: underline;
     }
     .summary-link .p-icon--external-link {
