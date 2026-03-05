@@ -104,18 +104,23 @@ def sync_jira_data() -> int:
             fetched_parent_keys.discard(issue.key)
 
     if fetched_parent_keys:
-        # Batch fetch parents (JQL: key in (...))
-        keys_csv = ", ".join(fetched_parent_keys)
-        parent_jql = f"key in ({keys_csv})"
-        logger.info("Fetching %d parent issues for rank: %s", len(fetched_parent_keys), parent_jql)
-        try:
-            parent_issues = jira.search_issues(parent_jql, maxResults=False, fields="customfield_10019,summary")
-            for pi in parent_issues:
-                rank = (pi.raw.get("fields") or {}).get("customfield_10019", "")
-                parent_ranks[pi.key] = rank or ""
-            logger.info("Fetched ranks for %d parent issues", len(parent_issues))
-        except Exception:
-            logger.exception("Failed to fetch parent ranks — objectives will sort by name")
+        # Batch fetch parents in chunks to avoid JQL length limits
+        CHUNK_SIZE = 100
+        keys_list = sorted(fetched_parent_keys)
+        logger.info("Fetching ranks for %d parent issues in chunks of %d", len(keys_list), CHUNK_SIZE)
+        for i in range(0, len(keys_list), CHUNK_SIZE):
+            chunk = keys_list[i : i + CHUNK_SIZE]
+            keys_csv = ", ".join(chunk)
+            parent_jql = f"key in ({keys_csv})"
+            logger.info("Fetching parent rank chunk %d–%d: %s", i, i + len(chunk), parent_jql)
+            try:
+                parent_issues = jira.search_issues(parent_jql, maxResults=False, fields="customfield_10019,summary")
+                for pi in parent_issues:
+                    rank = (pi.raw.get("fields") or {}).get("customfield_10019", "")
+                    parent_ranks[pi.key] = rank or ""
+                logger.info("Fetched ranks for %d parent issues in this chunk", len(parent_issues))
+            except Exception:
+                logger.exception("Failed to fetch parent ranks for chunk %d–%d", i, i + len(chunk))
 
     with get_db_connection() as conn:
         with conn.cursor() as cur:
