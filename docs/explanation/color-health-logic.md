@@ -13,9 +13,28 @@ The colour logic is deliberately isolated from the rest of the codebase:
 
 ## Health colour derivation
 
-The function examines two data sources in order of precedence:
+The function examines data sources in the following order of precedence:
 
-### 1. Custom field `roadmap_state` (highest priority)
+### 1. Jira status `Done` (highest priority)
+
+If the Jira workflow status is **Done**, it overrides any `roadmap_state` value:
+
+| roadmap_state | Status | Result |
+|---------------|--------|--------|
+| Added | Done | 🟦 Blue + "C" label |
+| *(any other)* | Done | 🟢 Green + "C" label |
+
+This ensures completed items are always clearly marked, even if a product manager previously set them as At Risk, Excluded, or Dropped.
+
+### 2. `Dropped` roadmap_state
+
+**Dropped** (⬛ Black) is preserved regardless of the Jira status (except Done). In particular, a Rejected + Dropped item stays black.
+
+### 3. Jira status `Rejected`
+
+If the Jira workflow status is **Rejected**, it overrides the remaining `roadmap_state` values (At Risk, Excluded, Added) and produces 🟥 Red.
+
+### 4. Custom field `roadmap_state`
 
 The Jira custom field `customfield_10968` (called "roadmap_state") provides explicit state overrides set by product managers:
 
@@ -24,22 +43,31 @@ The Jira custom field `customfield_10968` (called "roadmap_state") provides expl
 | At Risk | 🟧 Orange |
 | Excluded | 🟥 Red |
 | Added | 🟦 Blue |
-| Dropped | ⬛ Black |
 
 The field value may contain decorative emoji (🟧, 🟥, etc.) which are stripped before matching.
 
-### 2. Jira workflow status (fallback)
+### 5. Jira workflow status (fallback)
 
 If `roadmap_state` is not set (or has an unmapped value), the colour is derived from the Jira status:
 
 | Status | Colour |
 |--------|--------|
-| Done | 🟢 Green + "C" label (completed) |
-| Rejected | 🟥 Red |
 | In Progress, In Review, To Be Deployed, BLOCKED | 🟢 Green |
 | Everything else | ⬜ White (unknown / not started) |
 
-### 3. Future cycle override (display layer only)
+### Priority summary
+
+```
+Done + Added        → 🟦 Blue + "C"
+Done + (anything)   → 🟢 Green + "C"
+Dropped             → ⬛ Black         (even if Rejected)
+Rejected            → 🟥 Red           (overrides At Risk, Added)
+roadmap_state       → mapped colour
+Active statuses     → 🟢 Green
+(default)           → ⬜ White
+```
+
+### 6. Future cycle override (display layer only)
 
 Items in cycles with state `future` have their colour overridden to **white/Inactive** on the roadmap page. This happens in the display layer (`app.py`), not in `calculate_epic_color()`, because the sync pipeline should store the actual health colour.
 
@@ -74,7 +102,8 @@ During sync, we don't know which cycles are frozen — we just store the raw car
 {
     "health": {
         "color": "green",     # green, red, orange, blue, black, white
-        "label": "C"          # optional — only present for "Done" status
+        "label": "C"          # optional — present for "Done" status
+                              # (green "C" or blue "C" for Added+Done)
     },
     "carry_over": {
         "color": "purple",
