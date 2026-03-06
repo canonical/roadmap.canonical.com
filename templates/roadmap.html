@@ -39,7 +39,7 @@
     <div class="p-form__group">
       <label for="dept-input">Department</label>
       <div class="typeahead" id="dept-typeahead">
-        <input type="text" class="typeahead__input p-form-validation__input" id="dept-input" placeholder="" autocomplete="off" value="{{ selected_department or '' }}" />
+        <input type="text" class="typeahead__input p-form-validation__input" id="dept-input" placeholder="" autocomplete="off" value="{{ selected_department or 'All' }}" />
         <div class="typeahead__list" id="dept-list"></div>
       </div>
     </div>
@@ -186,11 +186,12 @@
 
 
   // ── Typeahead helper ──────────────────────────────────────────
-  function initTypeahead(inputEl, listEl, items, hiddenEl, onSelect) {
+  function initTypeahead(inputEl, listEl, items, hiddenEl, onSelect, emptyDisplay) {
+    function getItems() { return typeof items === 'function' ? items() : items; }
     function render(filter) {
       listEl.innerHTML = '';
       var q = (filter || '').toLowerCase();
-      var matches = items.filter(function(item) {
+      var matches = getItems().filter(function(item) {
         return !q || item.toLowerCase().indexOf(q) !== -1;
       });
       if (matches.length === 0) {
@@ -228,7 +229,7 @@
       // Delay to allow mousedown on option
       setTimeout(function() {
         listEl.style.display = 'none';
-        inputEl.value = hiddenEl.value;
+        inputEl.value = hiddenEl.value || emptyDisplay || '';
       }, 150);
     });
 
@@ -243,7 +244,7 @@
           onSelect();
         } else {
           // Select first match if any
-          var match = items.find(function(item) {
+          var match = getItems().find(function(item) {
             return item.toLowerCase() === q.toLowerCase();
           });
           if (match) {
@@ -263,32 +264,39 @@
 
   // ── Department typeahead ────────────────────────────────────────
   (function() {
-    var depts = Object.keys(deptProducts).sort();
+    var depts = ['All'].concat(Object.keys(deptProducts).sort());
     var input = document.getElementById('dept-input');
     var list = document.getElementById('dept-list');
 
     initTypeahead(input, list, depts, hiddenDept, function() {
+      if (hiddenDept.value === 'All') hiddenDept.value = '';
       hiddenProduct.value = '';
       document.getElementById('product-input').value = '';
       form.submit();
-    });
+    }, 'All');
   })();
 
   // ── Product typeahead ──────────────────────────────────────────
   (function() {
-    var allProducts = [];
-    var seen = {};
-    Object.keys(deptProducts).sort().forEach(function(dept) {
-      deptProducts[dept].forEach(function(p) {
-        if (!seen[p]) { allProducts.push(p); seen[p] = true; }
+    function getProducts() {
+      var dept = hiddenDept.value;
+      if (dept && deptProducts[dept]) {
+        return deptProducts[dept].slice().sort();
+      }
+      var all = [];
+      var seen = {};
+      Object.keys(deptProducts).sort().forEach(function(d) {
+        deptProducts[d].forEach(function(p) {
+          if (!seen[p]) { all.push(p); seen[p] = true; }
+        });
       });
-    });
-    allProducts.sort();
+      return all.sort();
+    }
 
     var input = document.getElementById('product-input');
     var list = document.getElementById('product-list');
 
-    initTypeahead(input, list, allProducts, hiddenProduct, function() {
+    initTypeahead(input, list, getProducts, hiddenProduct, function() {
       form.submit();
     });
   })();
