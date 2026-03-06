@@ -921,7 +921,7 @@ async def _query_frozen_items_for_cycle(
 
     where = " WHERE " + " AND ".join(clauses)
     query = (
-        "SELECT f.jira_key, f.title, f.product_name AS product, "
+        "SELECT f.jira_key, f.title, f.product_name AS product, f.department, "
         "       f.color_status, f.url, f.tags, "
         "       f.parent_key, f.parent_summary, f.rank, f.parent_rank "
         f"FROM cycle_freeze_item f{where} "
@@ -984,7 +984,7 @@ async def _query_roadmap_items(
 
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     query = (
-        "SELECT r.id, r.jira_key, r.title, p.name AS product, "
+        "SELECT r.id, r.jira_key, r.title, p.name AS product, p.department, "
         "       r.color_status, r.url, r.tags, "
         "       r.parent_key, r.parent_summary, r.rank, r.parent_rank "
         "FROM roadmap_item r "
@@ -1103,22 +1103,22 @@ async def _query_roadmap_items(
             item["_objective"] = objective_label
             raw.setdefault(fc, {}).setdefault(objective_label, []).append(item)
 
-    # Sort: cycles newest-first, objectives by parent_rank ("No objective" last),
-    # then epics within each objective by their own rank.
+    # Sort: cycles newest-first, objectives alphabetically within each cycle.
+    # Structure: {cycle: {objective: [items]}}
     grouped: OrderedDict[str, OrderedDict[str, list[dict]]] = OrderedDict()
     for c in sorted(raw.keys(), reverse=True):
-        objectives = raw[c]
-        sorted_keys = sorted(
-            objectives.keys(),
+        obj_map = raw[c]
+        sorted_obj_keys = sorted(
+            obj_map.keys(),
             key=lambda k: (
                 k == "No objective",
-                min((item.get("parent_rank") or "\xff") for item in objectives[k]),
+                min((it.get("parent_rank") or "\xff") for it in obj_map[k]),
             ),
         )
         grouped[c] = OrderedDict()
-        for k in sorted_keys:
+        for k in sorted_obj_keys:
             grouped[c][k] = sorted(
-                objectives[k],
+                obj_map[k],
                 key=lambda item: (item.get("rank") or "\xff", item.get("title") or ""),
             )
 
@@ -1135,10 +1135,9 @@ async def roadmap_page(
     """Render the main roadmap page with server-side Jinja2 templates."""
     options = await _query_filter_options(department=department)
 
-    # Force a product selection — if none chosen, default to the first available
+    # Normalise product — drop empty/invalid
     available_products = options["products"]
-    if not product or product not in available_products:
-        product = available_products[0] if available_products else None
+    selected_product = product if product and product in available_products else None
 
     # Default to the current cycle when none is selected
     if not cycle:
@@ -1146,11 +1145,33 @@ async def roadmap_page(
         if current:
             cycle = current[0]
 
-    grouped_items, objective_urls, cycle_states = await _query_roadmap_items(
-        department=department,
-        product=product,
-        cycle=cycle,
-    )
+    # Skip querying if no product selected
+    if not selected_product:
+        grouped_items: OrderedDict = OrderedDict()
+        objective_urls: dict[str, str] = {}
+        cycle_states: dict[str, str] = {}
+    else:
+        grouped_items, objective_urls, cycle_states = await _query_roadmap_items(
+            department=department,
+            product=selected_product,
+            cycle=cycle,
+        )
+
+    # Filter out placeholder entries from the dept/product tree
+    filtered_dept_products = {}
+    placeholder_names = {"Unassigned", "Uncategorized"}
+    for dept, prods in options["dept_products"].items():
+        filtered_prods = [p for p in prods if p not in placeholder_names]
+        if filtered_prods and dept not in placeholder_names:
+            filtered_dept_products[dept] = filtered_prods
+
+    # Find the department for the selected product
+    product_department = ""
+    if selected_product:
+        for dept, prods in options["dept_products"].items():
+            if selected_product in prods:
+                product_department = dept
+                break
 
     return templates.TemplateResponse(
         request,
@@ -1159,10 +1180,11 @@ async def roadmap_page(
             "departments": options["departments"],
             "products": available_products,
             "cycles": options["cycles"],
-            "dept_products_json": json.dumps(options["dept_products"]),
+            "dept_products_json": json.dumps(filtered_dept_products),
             "cycle_states": options["cycle_states"],
             "selected_department": department or "",
-            "selected_product": product or "",
+            "selected_product": selected_product or "",
+            "product_department": product_department,
             "selected_cycle": cycle or "",
             "grouped_items": grouped_items,
             "objective_urls": objective_urls,
