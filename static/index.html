@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Roadmap</title>
+
+  <!-- Vanilla Framework from CDN -->
+  <link rel="stylesheet" href="https://assets.ubuntu.com/v1/vanilla-framework-version-4.21.0.min.css" />
+
+  <style>
+    body { margin: 0; padding: 0; }
+    .l-main { padding: 0; margin: 0; max-width: none; }
+
+    /* ── colour cells ───────────────────────────────────────────────── */
+    .color-cell {
+      width: 1.2rem;
+      height: 1.2rem;
+      border-radius: .15rem;
+      display: inline-block;
+      vertical-align: middle;
+      border: 1px solid rgba(0, 0, 0, .15);
+      text-align: center;
+      font-size: .65rem;
+      font-weight: 700;
+      line-height: 1.2rem;
+      color: #fff;
+    }
+    .color-cell--green  { background-color: #0e8420; }
+    .color-cell--orange { background-color: #e95420; }
+    .color-cell--red    { background-color: #c7162b; }
+    .color-cell--blue   { background-color: #007aa6; }
+    .color-cell--black  { background-color: #111; }
+    .color-cell--white  { background-color: #fff; border-color: #999; color: #666; }
+
+    /* ── carry-over indicator ─────────────────────────────────────── */
+    .carry-over-indicator {
+      display: inline-flex;
+      align-items: center;
+      gap: .15rem;
+      color: #7c5295;
+      font-size: .65rem;
+      font-weight: 600;
+      line-height: 1;
+      white-space: nowrap;
+    }
+    .carry-over-indicator svg {
+      width: .85rem;
+      height: .85rem;
+      flex-shrink: 0;
+    }
+
+    /* ── product header ─────────────────────────────────────────────── */
+    .product-header {
+      padding: .5rem 1.25rem .35rem;
+      position: sticky;
+      top: 0;
+      background: #fff;
+      z-index: 1;
+      border-bottom: 1px solid rgba(0, 0, 0, .1);
+    }
+    .product-header__dept {
+      display: block;
+      font-size: .65rem;
+      font-weight: 400;
+      color: #999;
+      text-transform: uppercase;
+      letter-spacing: .03em;
+    }
+    .product-header__name {
+      font-size: .95rem;
+      font-weight: 600;
+      color: #333;
+    }
+
+    /* ── objective block ────────────────────────────────────────────── */
+    .objective-block {
+      margin-bottom: .25rem;
+    }
+    .objective-block h4 {
+      display: flex;
+      align-items: center;
+      gap: .35rem;
+      margin: .3rem 1.25rem .25rem;
+      padding: 0 0 .15rem;
+      font-size: .8rem;
+      color: #555;
+      max-width: none;
+    }
+    .objective-block h4 .p-badge {
+      margin-left: auto;
+      background: #e5e5e5;
+      color: #888;
+      font-weight: 400;
+    }
+
+    /* ── compact epic rows (single-line flexbox) ────────────────────── */
+    .epic-list {
+      list-style: none;
+      margin: 0;
+      padding: 0 1.25rem;
+    }
+    .epic-row {
+      display: flex;
+      align-items: center;
+      gap: .2rem;
+      padding: .2rem 0;
+      font-size: .8rem;
+      line-height: 1.3;
+    }
+    .epic-row__carry-over {
+      flex: 0 0 2rem;
+      text-align: center;
+    }
+    .epic-row__health {
+      flex: 0 0 1.4rem;
+    }
+    .epic-row__summary {
+      flex: 1 1 auto;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      min-width: 0;
+    }
+    .epic-row__summary a.summary-link,
+    .epic-row__summary a.summary-link:visited,
+    .epic-row__summary a.summary-link:active {
+      display: inline-flex;
+      align-items: center;
+      gap: .25rem;
+      color: #000;
+      text-decoration: none;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      opacity: 1;
+    }
+    .epic-row__summary a.summary-link:hover {
+      text-decoration: underline;
+    }
+    .summary-link .p-icon--external-link {
+      flex-shrink: 0;
+      opacity: .4;
+    }
+    .summary-link:hover .p-icon--external-link {
+      opacity: 1;
+    }
+    .jira-link {
+      margin-left: .35rem;
+      vertical-align: middle;
+      opacity: .5;
+    }
+    .jira-link:hover { opacity: 1; }
+
+    /* ── sidebar + main layout ───────────────────────────────────── */
+    .layout-sidebar-main {
+      display: flex;
+      min-height: 100vh;
+    }
+    a.clear-filters,
+    a.clear-filters:visited {
+      display: flex;
+      align-items: center;
+      margin-left: auto;
+      flex-shrink: 0;
+      color: #333;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    .clear-filters:hover {
+      color: #c7162b;
+    }
+    .layout-sidebar {
+      display: flex;
+      flex-direction: column;
+      width: 14rem;
+      flex-shrink: 0;
+      padding: 0 1rem 1rem;
+      border-right: 1px solid rgba(0, 0, 0, .1);
+      background: #f7f7f7;
+      overflow-y: auto;
+      overflow-x: hidden;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+    }
+    .layout-sidebar .p-form__group {
+      margin-bottom: .4rem;
+    }
+    .layout-sidebar label {
+      font-size: .8rem;
+      font-weight: 600;
+      margin-bottom: .15rem;
+    }
+    .layout-sidebar select,
+    .layout-sidebar input[type="text"] {
+      width: 100%;
+      font-size: .8rem;
+      margin-bottom: 0;
+    }
+    .layout-sidebar .sidebar-section-title {
+      font-size: .8rem;
+      font-weight: 600;
+      color: inherit;
+      margin: 2rem 0 .35rem;
+      padding-bottom: .2rem;
+    }
+    .layout-sidebar .legend-filter {
+      display: flex;
+      align-items: center;
+      gap: .3rem;
+      padding: .1rem 0;
+      font-size: .75rem;
+      cursor: pointer;
+      transition: opacity .15s, color .15s;
+      user-select: none;
+    }
+    .layout-sidebar .legend-filter:hover {
+      color: #007aa6;
+    }
+    .layout-sidebar .legend-filter.is-dimmed {
+      opacity: .35;
+    }
+    .layout-sidebar .legend-filter .color-cell {
+      width: 1rem;
+      height: 1rem;
+      line-height: 1rem;
+      font-size: .55rem;
+    }
+    .layout-sidebar .legend-filter .legend-stat {
+      margin-left: auto;
+      font-size: .6rem;
+      font-weight: 600;
+      color: #666;
+    }
+    .layout-main {
+      flex: 1;
+      min-width: 0;
+      padding: 0;
+      overflow-y: auto;
+      height: 100vh;
+    }
+
+    /* ── typeahead ──────────────────────────────────────────────────── */
+    .typeahead {
+      position: relative;
+    }
+    .typeahead__input {
+      margin: 0;
+    }
+    .typeahead__list {
+      display: none;
+      position: absolute;
+      top: calc(100% - 1px);
+      left: 0;
+      right: 0;
+      max-height: 14rem;
+      overflow-y: auto;
+      background: #fff;
+      border: 1px solid #ccc;
+      border-top: none;
+      border-radius: 0 0 .2rem .2rem;
+      z-index: 50;
+      box-shadow: 0 2px 6px rgba(0,0,0,.1);
+    }
+    .typeahead__option {
+      padding: .25rem .5rem;
+      font-size: .75rem;
+      cursor: pointer;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .typeahead__option:hover {
+      background: rgba(0, 122, 166, .1);
+    }
+    .typeahead__option.is-selected {
+      font-weight: 600;
+      color: #007aa6;
+    }
+
+    /* ── sidebar logo ────────────────────────────────────────────── */
+    .sidebar-logo.p-panel__header {
+      display: flex;
+      align-items: center;
+      margin: 0 0 .5rem;
+      padding: 0;
+    }
+    .sidebar-logo .p-navigation__tagged-logo {
+      flex: 1;
+      min-width: 0;
+    }
+
+    /* ── empty state ─────────────────────────────────────────────── */
+    .empty-state {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: #999;
+      font-size: .85rem;
+    }
+  </style>
+</head>
+<body>
+
+  <main class="l-main">
+    <div class="layout-sidebar-main">
+      <aside class="layout-sidebar">
+        <div class="p-panel__header sidebar-logo">
+          <div class="p-navigation__tagged-logo">
+            <a class="p-navigation__link" href="/" aria-label="Canonical Roadmap - Home">
+              <div class="p-navigation__logo-tag">
+                <img class="p-navigation__logo-icon" src="https://assets.ubuntu.com/v1/82818827-CoF_white.svg" alt="Canonical logo" width="95">
+              </div>
+              <span class="p-navigation__logo-title">Roadmap</span>
+            </a>
+          </div>
+          <a href="/" class="clear-filters" title="Clear all filters" id="clear-filters-btn" style="display: none;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/><line x1="1" y1="1" x2="23" y2="23"/>
+            </svg>
+          </a>
+        </div>
+
+        <!-- Cycle selector -->
+        <div class="p-form__group">
+          <label for="cycle">Cycle</label>
+          <select id="cycle" class="p-form-validation__input"></select>
+        </div>
+
+        <!-- Department filter -->
+        <div class="p-form__group">
+          <label for="dept-input">Department</label>
+          <div class="typeahead" id="dept-typeahead">
+            <input type="text" class="typeahead__input p-form-validation__input" id="dept-input" placeholder="" autocomplete="off" />
+            <div class="typeahead__list" id="dept-list"></div>
+          </div>
+        </div>
+
+        <!-- Product filter -->
+        <div class="p-form__group">
+          <label for="product-input">Product</label>
+          <div class="typeahead" id="product-typeahead">
+            <input type="text" class="typeahead__input p-form-validation__input" id="product-input" placeholder="" autocomplete="off" />
+            <div class="typeahead__list" id="product-list"></div>
+          </div>
+        </div>
+
+        <!-- Status legend -->
+        <div class="sidebar-section-title">Status</div>
+        <div id="legend-bar">
+          <span class="legend-filter" data-health="completed">
+            <span class="color-cell color-cell--green">C</span> Completed
+            <span class="legend-stat"></span>
+          </span>
+          <span class="legend-filter" data-health="in-progress">
+            <span class="color-cell color-cell--green">&nbsp;</span> In Progress
+            <span class="legend-stat"></span>
+          </span>
+          <span class="legend-filter" data-health="at-risk">
+            <span class="color-cell color-cell--orange">&nbsp;</span> At Risk
+            <span class="legend-stat"></span>
+          </span>
+          <span class="legend-filter" data-health="rejected">
+            <span class="color-cell color-cell--red">&nbsp;</span> Excluded
+            <span class="legend-stat"></span>
+          </span>
+          <span class="legend-filter" data-health="added">
+            <span class="color-cell color-cell--blue">&nbsp;</span> Added
+            <span class="legend-stat"></span>
+          </span>
+          <span class="legend-filter" data-health="dropped">
+            <span class="color-cell color-cell--black">&nbsp;</span> Dropped
+            <span class="legend-stat"></span>
+          </span>
+          <span class="legend-filter" data-health="unknown">
+            <span class="color-cell color-cell--white">&nbsp;</span> Inactive
+            <span class="legend-stat"></span>
+          </span>
+        </div>
+      </aside>
+
+      <div class="layout-main" id="main-content">
+        <div class="empty-state">
+          <span>Pick a product to view its roadmap.</span>
+        </div>
+      </div>
+    </div>
+  </main>
+
+<script>
+(function() {
+  'use strict';
+
+  var DATA = null;
+  var selectedCycle = '';
+  var selectedDepartment = '';
+  var selectedProduct = '';
+  var activeHealthFilters = new Set();
+
+  // ── Load data ──────────────────────────────────────────────────────
+  fetch('data.json')
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      DATA = d;
+      initFromUrl();
+      populateCycleDropdown();
+      initTypeaheads();
+      render();
+    })
+    .catch(function(err) {
+      document.getElementById('main-content').innerHTML =
+        '<div class="empty-state"><span>Failed to load data: ' + err.message + '</span></div>';
+    });
+
+  // ── URL state ──────────────────────────────────────────────────────
+  function initFromUrl() {
+    var params = new URLSearchParams(window.location.search);
+    selectedCycle = params.get('cycle') || '';
+    selectedDepartment = params.get('department') || '';
+    selectedProduct = params.get('product') || '';
+
+    // Default to current cycle
+    if (!selectedCycle) {
+      var states = DATA.cycle_states || {};
+      for (var c in states) {
+        if (states[c] === 'current') { selectedCycle = c; break; }
+      }
+      if (!selectedCycle && DATA.cycles && DATA.cycles.length) {
+        selectedCycle = DATA.cycles[0];
+      }
+    }
+  }
+
+  function updateUrl() {
+    var params = new URLSearchParams();
+    if (selectedCycle) params.set('cycle', selectedCycle);
+    if (selectedDepartment) params.set('department', selectedDepartment);
+    if (selectedProduct) params.set('product', selectedProduct);
+    var qs = params.toString();
+    var url = window.location.pathname + (qs ? '?' + qs : '');
+    history.replaceState(null, '', url);
+
+    // Show/hide clear filters button
+    var btn = document.getElementById('clear-filters-btn');
+    btn.style.display = (selectedDepartment || selectedProduct) ? '' : 'none';
+  }
+
+  // ── Cycle dropdown ─────────────────────────────────────────────────
+  function populateCycleDropdown() {
+    var sel = document.getElementById('cycle');
+    sel.innerHTML = '';
+    var cycles = DATA.cycles || [];
+    var states = DATA.cycle_states || {};
+    cycles.forEach(function(c) {
+      var opt = document.createElement('option');
+      opt.value = c;
+      opt.textContent = c + (states[c] === 'frozen' ? ' \uD83D\uDD12' : '');
+      if (c === selectedCycle) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    sel.addEventListener('change', function() {
+      selectedCycle = sel.value;
+      render();
+    });
+  }
+
+  // ── Typeahead helper ───────────────────────────────────────────────
+  function initTypeahead(inputEl, listEl, getItems, getValue, onSelect) {
+    function render(filter) {
+      listEl.innerHTML = '';
+      var q = (filter || '').toLowerCase();
+      var items = getItems();
+      var matches = items.filter(function(item) {
+        return !q || item.toLowerCase().indexOf(q) !== -1;
+      });
+      if (matches.length === 0) {
+        listEl.style.display = 'none';
+        return;
+      }
+      matches.forEach(function(item) {
+        var opt = document.createElement('div');
+        opt.className = 'typeahead__option';
+        if (item === getValue()) opt.classList.add('is-selected');
+        opt.textContent = item;
+        opt.addEventListener('mousedown', function(e) {
+          e.preventDefault();
+          inputEl.value = item;
+          listEl.style.display = 'none';
+          onSelect(item);
+        });
+        listEl.appendChild(opt);
+      });
+      listEl.style.display = 'block';
+    }
+
+    inputEl.addEventListener('focus', function() {
+      if (inputEl.value) inputEl.value = '';
+      render('');
+    });
+    inputEl.addEventListener('input', function() {
+      render(inputEl.value);
+    });
+    inputEl.addEventListener('blur', function() {
+      setTimeout(function() {
+        listEl.style.display = 'none';
+        inputEl.value = getValue();
+      }, 150);
+    });
+    inputEl.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        var q = inputEl.value.trim();
+        if (!q) {
+          listEl.style.display = 'none';
+          onSelect('');
+        } else {
+          var items = getItems();
+          var match = items.find(function(it) { return it.toLowerCase() === q.toLowerCase(); });
+          if (match) {
+            inputEl.value = match;
+            listEl.style.display = 'none';
+            onSelect(match);
+          }
+        }
+      }
+      if (e.key === 'Escape') {
+        listEl.style.display = 'none';
+        inputEl.blur();
+      }
+    });
+  }
+
+  // ── Typeaheads ─────────────────────────────────────────────────────
+  function initTypeaheads() {
+    // Department
+    initTypeahead(
+      document.getElementById('dept-input'),
+      document.getElementById('dept-list'),
+      function() { return Object.keys(DATA.dept_products || {}).sort(); },
+      function() { return selectedDepartment; },
+      function(val) {
+        selectedDepartment = val;
+        selectedProduct = '';
+        document.getElementById('product-input').value = '';
+        render();
+      }
+    );
+
+    // Product
+    initTypeahead(
+      document.getElementById('product-input'),
+      document.getElementById('product-list'),
+      function() {
+        var allProducts = [];
+        var seen = {};
+        var dp = DATA.dept_products || {};
+        var depts = Object.keys(dp).sort();
+        // If department is selected, only show its products
+        if (selectedDepartment && dp[selectedDepartment]) {
+          return dp[selectedDepartment].slice().sort();
+        }
+        depts.forEach(function(d) {
+          dp[d].forEach(function(p) {
+            if (!seen[p]) { allProducts.push(p); seen[p] = true; }
+          });
+        });
+        return allProducts.sort();
+      },
+      function() { return selectedProduct; },
+      function(val) {
+        selectedProduct = val;
+        render();
+      }
+    );
+
+    // Set initial values
+    document.getElementById('dept-input').value = selectedDepartment;
+    document.getElementById('product-input').value = selectedProduct;
+  }
+
+  // ── Health ID helper ───────────────────────────────────────────────
+  function healthId(colorStatus) {
+    if (!colorStatus || !colorStatus.health) return 'unknown';
+    var color = colorStatus.health.color;
+    var label = colorStatus.health.label || '';
+    if (color === 'green' && label === 'C') return 'completed';
+    if (color === 'green') return 'in-progress';
+    if (color === 'orange') return 'at-risk';
+    if (color === 'red') return 'rejected';
+    if (color === 'blue') return 'added';
+    if (color === 'black') return 'dropped';
+    return 'unknown';
+  }
+
+  // ── Truncate ───────────────────────────────────────────────────────
+  function truncate(str, len) {
+    if (!str) return '';
+    return str.length > len ? str.substring(0, len - 1) + '\u2026' : str;
+  }
+
+  // ── Render ─────────────────────────────────────────────────────────
+  function render() {
+    updateUrl();
+    var main = document.getElementById('main-content');
+
+    if (!selectedProduct) {
+      main.innerHTML = '<div class="empty-state"><span>Pick a product to view its roadmap.</span></div>';
+      updateStats([]);
+      return;
+    }
+
+    var productData = DATA.products[selectedProduct];
+    if (!productData) {
+      main.innerHTML = '<div class="empty-state"><span>No data for this product.</span></div>';
+      updateStats([]);
+      return;
+    }
+
+    var cycleData = productData.cycles[selectedCycle];
+    if (!cycleData || Object.keys(cycleData).length === 0) {
+      main.innerHTML =
+        '<div class="product-header">' +
+          '<span class="product-header__dept">' + escHtml(productData.department) + '</span>' +
+          '<span class="product-header__name">' + escHtml(selectedProduct) + '</span>' +
+        '</div>' +
+        '<p class="p-heading--4 u-text--muted" style="margin-top: 2rem; padding: 0 1.25rem;">No roadmap items for this cycle.</p>';
+      updateStats([]);
+      return;
+    }
+
+    var html = '';
+    html += '<div class="product-header">';
+    html += '<span class="product-header__dept">' + escHtml(productData.department) + '</span>';
+    html += '<span class="product-header__name">' + escHtml(selectedProduct) + '</span>';
+    html += '</div>';
+
+    var allItems = [];
+    var objectiveKeys = Object.keys(cycleData);
+
+    objectiveKeys.forEach(function(objLabel) {
+      var items = cycleData[objLabel];
+      var visibleItems = items.filter(function(item) {
+        if (activeHealthFilters.size === 0) return true;
+        return activeHealthFilters.has(healthId(item.color_status));
+      });
+
+      allItems = allItems.concat(items);
+
+      if (visibleItems.length === 0) return;
+
+      html += '<div class="objective-block">';
+      html += '<h4>';
+      html += escHtml(objLabel);
+
+      var objUrl = (DATA.objective_urls || {})[objLabel];
+      if (objUrl) {
+        html += '<a href="' + escHtml(objUrl) + '" target="_blank" rel="noopener" class="jira-link" title="Open in Jira">';
+        html += '<i class="p-icon--external-link"></i>';
+        html += '</a>';
+      }
+
+      html += '<span class="p-badge">' + visibleItems.length + '</span>';
+      html += '</h4>';
+      html += '<ul class="epic-list">';
+
+      visibleItems.forEach(function(item) {
+        var hid = healthId(item.color_status);
+        var cs = item.color_status || {};
+        var health = cs.health || {};
+        var carry = cs.carry_over;
+
+        html += '<li class="epic-row" data-health="' + hid + '">';
+
+        // Carry-over
+        html += '<span class="epic-row__carry-over">';
+        if (carry && carry.count) {
+          html += '<span class="carry-over-indicator" title="Times carried over from a previous cycle.">';
+          html += '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>';
+          html += carry.count;
+          html += '</span>';
+        }
+        html += '</span>';
+
+        // Health cell
+        html += '<span class="epic-row__health">';
+        html += '<span class="color-cell color-cell--' + (health.color || 'white') + '">';
+        html += escHtml(health.label || '');
+        html += '</span>';
+        html += '</span>';
+
+        // Summary
+        html += '<span class="epic-row__summary">';
+        html += '<a href="' + escHtml(item.url || '') + '" target="_blank" rel="noopener" class="jira-link summary-link">';
+        html += escHtml(truncate(item.title, 90));
+        html += ' <i class="p-icon--external-link"></i>';
+        html += '</a>';
+        html += '</span>';
+
+        html += '</li>';
+      });
+
+      html += '</ul>';
+      html += '</div>';
+    });
+
+    main.innerHTML = html;
+    updateStats(allItems);
+  }
+
+  // ── Stats + legend ─────────────────────────────────────────────────
+  function updateStats(items) {
+    var counts = {};
+    var total = 0;
+    var legendItems = document.querySelectorAll('.legend-filter[data-health]');
+    legendItems.forEach(function(el) { counts[el.getAttribute('data-health')] = 0; });
+
+    items.forEach(function(item) {
+      var hid = healthId(item.color_status);
+      if (counts[hid] !== undefined) counts[hid]++;
+      total++;
+    });
+
+    legendItems.forEach(function(el) {
+      var hid = el.getAttribute('data-health');
+      var stat = el.querySelector('.legend-stat');
+      if (!stat) return;
+      var c = counts[hid] || 0;
+      var pct = total > 0 ? Math.round(c / total * 100) : 0;
+      stat.textContent = c > 0 ? c + ' (' + pct + '%)' : '';
+    });
+  }
+
+  // ── Legend click handler ───────────────────────────────────────────
+  (function() {
+    var legendItems = document.querySelectorAll('.legend-filter[data-health]');
+    legendItems.forEach(function(el) {
+      el.addEventListener('click', function() {
+        var id = el.getAttribute('data-health');
+        if (activeHealthFilters.has(id)) {
+          activeHealthFilters.delete(id);
+        } else {
+          activeHealthFilters.add(id);
+        }
+
+        // Update legend styling
+        var filtering = activeHealthFilters.size > 0;
+        legendItems.forEach(function(le) {
+          var lid = le.getAttribute('data-health');
+          if (filtering) {
+            le.classList.toggle('is-active', activeHealthFilters.has(lid));
+            le.classList.toggle('is-dimmed', !activeHealthFilters.has(lid));
+          } else {
+            le.classList.remove('is-active', 'is-dimmed');
+          }
+        });
+
+        render();
+      });
+    });
+  })();
+
+  // ── Clear filters ──────────────────────────────────────────────────
+  document.getElementById('clear-filters-btn').addEventListener('click', function(e) {
+    e.preventDefault();
+    selectedDepartment = '';
+    selectedProduct = '';
+    document.getElementById('dept-input').value = '';
+    document.getElementById('product-input').value = '';
+    render();
+  });
+
+  // ── HTML escape helper ─────────────────────────────────────────────
+  function escHtml(str) {
+    if (!str) return '';
+    var div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
+})();
+</script>
+</body>
+</html>

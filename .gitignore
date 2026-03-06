@@ -21,3 +21,6 @@ build/
 
 *.rock
 *.charm
+
+# SSG output
+_site/

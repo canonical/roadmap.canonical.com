@@ -1,0 +1,69 @@
+# Product definitions and cycle configuration.
+#
+# This file replaces the database tables: product, product_jira_source,
+# and cycle_config. The build script reads it to know which Jira issues
+# belong to which product and how to handle each cycle.
+
+# ── Jira connection ────────────────────────────────────────────────────
+# Credentials come from environment variables:
+#   JIRA_URL       (default: https://warthogs.atlassian.net)
+#   JIRA_USERNAME
+#   JIRA_PAT
+jira:
+  jql_filter: 'issuetype = Epic AND "Properties[Checkboxes]" = "Roadmap Item"'
+
+# ── Cycles ─────────────────────────────────────────────────────────────
+# States: frozen (immutable snapshot), current (live), future (all Inactive)
+# At most one cycle should be "current".
+cycles:
+  "25.10":
+    state: frozen
+  "26.04":
+    state: current
+  "26.10":
+    state: future
+  # "24.10":
+  #   state: frozen
+
+# ── Products ───────────────────────────────────────────────────────────
+# Each product belongs to a department and has one or more Jira source
+# rules that determine which issues map to it.
+#
+# Matching logic (first match wins across all products):
+#   1. jira_project_key must match
+#   2. include_components / exclude_components filter on Jira components
+#   3. include_labels / exclude_labels filter on Jira labels
+#   4. include_teams / exclude_teams filter on the Jira Team field
+#
+# Example:
+#
+# products:
+#   - name: Juju
+#     department: Charm Tech
+#     jira_sources:
+#       - jira_project_key: JUJU
+#
+#   - name: Observability
+#     department: Charm Tech
+#     jira_sources:
+#       - jira_project_key: DPE
+#         include_teams:
+#           - Observability
+#
+products:
+  - name: Juju
+    department: Charming
+    jira_sources:
+      - jira_project_key: JUJU
+  - name: Observability / Core
+    department: Charming
+    jira_sources:
+      - jira_project_key: OBC
+  - name: Observability / Tracing and Profiling
+    department: Charming
+    jira_sources:
+      - jira_project_key: TAP
+  - name: Observability / Service Mesh
+    department: Charming
+    jira_sources:
+      - jira_project_key: SMS
