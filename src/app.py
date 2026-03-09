@@ -1144,10 +1144,7 @@ async def roadmap_page(
                 break
 
     # Derive available products from the dept→products mapping
-    if department:
-        available_products = options["dept_products"].get(department, [])
-    else:
-        available_products = options["products"]
+    available_products = options["dept_products"].get(department, []) if department else options["products"]
 
     # Normalise product — drop empty/invalid
     selected_product = product if product and product in available_products else None
