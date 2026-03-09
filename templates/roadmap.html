@@ -235,7 +235,7 @@
         opt.className = 'typeahead__option';
         opt.setAttribute('role', 'option');
         opt.id = listEl.id + '-opt-' + i;
-        if (item === hiddenEl.value) opt.classList.add('is-selected');
+        if (item === (hiddenEl.value || emptyDisplay)) opt.classList.add('is-selected');
         opt.textContent = item;
         opt.addEventListener('mousedown', function(e) {
           e.preventDefault();

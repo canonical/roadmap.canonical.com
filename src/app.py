@@ -1146,7 +1146,7 @@ async def roadmap_page(
         default_cycle = current[0]
     elif options["cycles"]:
         default_cycle = options["cycles"][0]
-    if not cycle:
+    if not cycle or cycle not in options["cycles"]:
         cycle = default_cycle
 
     # Skip querying if no product selected
