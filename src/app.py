@@ -1167,6 +1167,7 @@ async def roadmap_page(
         if cycle:
             params["cycle"] = cycle
         from urllib.parse import urlencode
+
         qs = urlencode(params)
         return RedirectResponse(url=f"/?{qs}" if qs else "/", status_code=302)
 
