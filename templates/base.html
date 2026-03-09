@@ -403,6 +403,9 @@
             return;
           }
 
+          // Compute durations client-side from ISO timestamps so the
+          // display is always relative to the *browser* clock and immune
+          // to server ↔ client clock skew.
           var nowMs   = Date.now();
           var sinceSec = d.last_sync_end
                          ? Math.round((nowMs - new Date(d.last_sync_end).getTime()) / 1000)
@@ -446,6 +449,7 @@
     }
 
     refreshSync();
+    // Refresh every 60 s so the "ago" label stays current
     setInterval(refreshSync, 60000);
   })();
   </script>

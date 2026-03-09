@@ -851,8 +851,8 @@ async def delete_product(product_id: int):
 CYCLE_RE = re.compile(r"^\d{2}\.\d{2}$")
 
 
-async def _query_filter_options() -> dict:
-    """Fetch distinct departments, products, and cycle labels for filter dropdowns.
+async def _query_filter_options(department: str | None = None) -> dict:
+    """Fetch distinct departments, products (filtered by department), and cycle labels for filter dropdowns.
 
     Also returns a ``dept_products`` mapping (department → [product names]) so the
     frontend can dynamically update the product dropdown when the department changes,
@@ -862,7 +862,11 @@ async def _query_filter_options() -> dict:
         await cur.execute("SELECT DISTINCT department FROM product ORDER BY department")
         departments = [r[0] for r in await cur.fetchall()]
 
-        await cur.execute("SELECT DISTINCT name FROM product ORDER BY name")
+        # Products for the selected department (or all if none selected)
+        if department:
+            await cur.execute("SELECT DISTINCT name FROM product WHERE department = %s ORDER BY name", (department,))
+        else:
+            await cur.execute("SELECT DISTINCT name FROM product ORDER BY name")
         products = [r[0] for r in await cur.fetchall()]
 
         # Full department → products mapping for client-side filtering
