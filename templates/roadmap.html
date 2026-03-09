@@ -13,7 +13,7 @@
         <span class="p-navigation__logo-title">Roadmap</span>
       </a>
     </div>
-    {% if selected_department or selected_product %}
+    {% if selected_department or selected_product or selected_cycle != default_cycle %}
     <a href="/" class="clear-filters" title="Clear all filters">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/><line x1="1" y1="1" x2="23" y2="23"/>
@@ -39,8 +39,8 @@
     <div class="p-form__group">
       <label for="dept-input">Department</label>
       <div class="typeahead" id="dept-typeahead">
-        <input type="text" class="typeahead__input p-form-validation__input" id="dept-input" placeholder="" autocomplete="off" value="{{ selected_department or 'All' }}" />
-        <div class="typeahead__list" id="dept-list"></div>
+        <input type="text" class="typeahead__input p-form-validation__input" id="dept-input" placeholder="" autocomplete="off" value="{{ selected_department or 'All' }}" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="dept-list" />
+        <div class="typeahead__list" id="dept-list" role="listbox"></div>
       </div>
     </div>
 
@@ -48,8 +48,8 @@
     <div class="p-form__group">
       <label for="product-input">Product</label>
       <div class="typeahead" id="product-typeahead">
-        <input type="text" class="typeahead__input p-form-validation__input" id="product-input" placeholder="" autocomplete="off" value="{{ selected_product or '' }}" />
-        <div class="typeahead__list" id="product-list"></div>
+        <input type="text" class="typeahead__input p-form-validation__input" id="product-input" placeholder="" autocomplete="off" value="{{ selected_product or '' }}" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="product-list" />
+        <div class="typeahead__list" id="product-list" role="listbox"></div>
       </div>
     </div>
   </form>
@@ -92,11 +92,9 @@
 
 {% block content %}
   {% if not selected_product %}
-    <div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #999;">
+    <div style="display: flex; align-items: center; justify-content: center; flex: 1; color: #999;">
       <span style="font-size: .85rem;">Pick a product to view its roadmap.</span>
     </div>
-  {% elif not grouped_items %}
-    <p class="p-heading--4 u-text--muted" style="margin-top: 2rem;">No roadmap items match the current filters.</p>
   {% endif %}
 
   {# ── Macro for rendering an epic row ────────────────────────── #}
@@ -148,9 +146,14 @@
     <span class="product-header__dept">{{ product_department }}</span>
     <span class="product-header__name">{{ selected_product }}</span>
   </div>
+  {% if not grouped_items %}
+    <div style="display: flex; align-items: center; justify-content: center; flex: 1; color: #999;">
+      <span style="font-size: .85rem;">No roadmap items match the current filters.</span>
+    </div>
+  {% endif %}
   {% endif %}
 
-  {% for cycle_name, objectives_map in grouped_items.items() %}
+  {% for _cycle_name, objectives_map in grouped_items.items() %}
     {% for objective_label, items in objectives_map.items() %}
     <div class="objective-block">
       <h4>
@@ -187,20 +190,51 @@
 
   // ── Typeahead helper ──────────────────────────────────────────
   function initTypeahead(inputEl, listEl, items, hiddenEl, onSelect, emptyDisplay) {
+    var activeIndex = -1;
+
     function getItems() { return typeof items === 'function' ? items() : items; }
+
+    function setExpanded(open) {
+      inputEl.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+
+    function clearHighlight() {
+      var opts = listEl.querySelectorAll('.typeahead__option');
+      opts.forEach(function(o) { o.classList.remove('is-highlighted'); o.removeAttribute('aria-selected'); });
+      inputEl.removeAttribute('aria-activedescendant');
+      activeIndex = -1;
+    }
+
+    function highlightIndex(idx) {
+      var opts = listEl.querySelectorAll('.typeahead__option');
+      if (opts.length === 0) return;
+      clearHighlight();
+      if (idx < 0) idx = opts.length - 1;
+      if (idx >= opts.length) idx = 0;
+      activeIndex = idx;
+      opts[activeIndex].classList.add('is-highlighted');
+      opts[activeIndex].setAttribute('aria-selected', 'true');
+      inputEl.setAttribute('aria-activedescendant', opts[activeIndex].id);
+      opts[activeIndex].scrollIntoView({ block: 'nearest' });
+    }
+
     function render(filter) {
       listEl.innerHTML = '';
+      activeIndex = -1;
       var q = (filter || '').toLowerCase();
       var matches = getItems().filter(function(item) {
         return !q || item.toLowerCase().indexOf(q) !== -1;
       });
       if (matches.length === 0) {
         listEl.style.display = 'none';
+        setExpanded(false);
         return;
       }
-      matches.forEach(function(item) {
+      matches.forEach(function(item, i) {
         var opt = document.createElement('div');
         opt.className = 'typeahead__option';
+        opt.setAttribute('role', 'option');
+        opt.id = listEl.id + '-opt-' + i;
         if (item === hiddenEl.value) opt.classList.add('is-selected');
         opt.textContent = item;
         opt.addEventListener('mousedown', function(e) {
@@ -208,11 +242,13 @@
           inputEl.value = item;
           hiddenEl.value = item;
           listEl.style.display = 'none';
+          setExpanded(false);
           onSelect();
         });
         listEl.appendChild(opt);
       });
       listEl.style.display = 'block';
+      setExpanded(true);
     }
 
     // Show all on focus, clear previous selection to show full list
@@ -229,34 +265,52 @@
       // Delay to allow mousedown on option
       setTimeout(function() {
         listEl.style.display = 'none';
+        setExpanded(false);
         inputEl.value = hiddenEl.value || emptyDisplay || '';
       }, 150);
     });
 
-    // Allow clearing with empty input + Enter
     inputEl.addEventListener('keydown', function(e) {
-      if (e.key === 'Enter') {
+      var opts = listEl.querySelectorAll('.typeahead__option');
+      if (e.key === 'ArrowDown') {
         e.preventDefault();
-        var q = inputEl.value.trim();
-        if (!q) {
-          hiddenEl.value = '';
+        if (listEl.style.display === 'none') { render(''); return; }
+        highlightIndex(activeIndex + 1);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        highlightIndex(activeIndex - 1);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (activeIndex >= 0 && opts[activeIndex]) {
+          var val = opts[activeIndex].textContent;
+          inputEl.value = val;
+          hiddenEl.value = val;
           listEl.style.display = 'none';
+          setExpanded(false);
           onSelect();
         } else {
-          // Select first match if any
-          var match = getItems().find(function(item) {
-            return item.toLowerCase() === q.toLowerCase();
-          });
-          if (match) {
-            inputEl.value = match;
-            hiddenEl.value = match;
+          var q = inputEl.value.trim();
+          if (!q) {
+            hiddenEl.value = '';
             listEl.style.display = 'none';
+            setExpanded(false);
             onSelect();
+          } else {
+            var match = getItems().find(function(item) {
+              return item.toLowerCase() === q.toLowerCase();
+            });
+            if (match) {
+              inputEl.value = match;
+              hiddenEl.value = match;
+              listEl.style.display = 'none';
+              setExpanded(false);
+              onSelect();
+            }
           }
         }
-      }
-      if (e.key === 'Escape') {
+      } else if (e.key === 'Escape') {
         listEl.style.display = 'none';
+        setExpanded(false);
         inputEl.blur();
       }
     });

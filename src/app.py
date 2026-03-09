@@ -1140,10 +1140,12 @@ async def roadmap_page(
     selected_product = product if product and product in available_products else None
 
     # Default to the current cycle when none is selected
+    default_cycle = None
+    current = [c for c, s in options["cycle_states"].items() if s == "current"]
+    if current:
+        default_cycle = current[0]
     if not cycle:
-        current = [c for c, s in options["cycle_states"].items() if s == "current"]
-        if current:
-            cycle = current[0]
+        cycle = default_cycle
 
     # Skip querying if no product selected
     if not selected_product:
@@ -1157,13 +1159,7 @@ async def roadmap_page(
             cycle=cycle,
         )
 
-    # Filter out placeholder entries from the dept/product tree
-    filtered_dept_products = {}
-    placeholder_names = {"Unassigned", "Uncategorized"}
-    for dept, prods in options["dept_products"].items():
-        filtered_prods = [p for p in prods if p not in placeholder_names]
-        if filtered_prods and dept not in placeholder_names:
-            filtered_dept_products[dept] = filtered_prods
+    filtered_dept_products = options["dept_products"]
 
     # Find the department for the selected product
     product_department = ""
@@ -1186,6 +1182,7 @@ async def roadmap_page(
             "selected_product": selected_product or "",
             "product_department": product_department,
             "selected_cycle": cycle or "",
+            "default_cycle": default_cycle or "",
             "grouped_items": grouped_items,
             "objective_urls": objective_urls,
             "cycle_states_in_view": cycle_states,

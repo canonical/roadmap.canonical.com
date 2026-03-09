@@ -241,6 +241,8 @@
       padding: 0;
       overflow-y: auto;
       height: 100vh;
+      display: flex;
+      flex-direction: column;
     }
 
     /* ── typeahead ──────────────────────────────────────────────────── */
@@ -279,6 +281,9 @@
     .typeahead__option.is-selected {
       font-weight: 600;
       color: #007aa6;
+    }
+    .typeahead__option.is-highlighted {
+      background: rgba(0, 122, 166, .15);
     }
 
     /* ── sidebar logo ────────────────────────────────────────────── */
