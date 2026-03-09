@@ -1135,17 +1135,40 @@ async def roadmap_page(
     """Render the main roadmap page with server-side Jinja2 templates."""
     options = await _query_filter_options()
 
-    # Normalise department — drop invalid values
+    # Normalise department — drop invalid values; track whether it was bad
+    # so we can correct it from the product below.
+    dept_was_invalid = False
     if department and department not in options["departments"]:
         department = None
+        dept_was_invalid = True
 
-    # If a product is provided, derive/override department from the product
-    # so that stale bookmarks like ?department=Old&product=Valid still work.
-    if product:
+    # When department was invalid (stale bookmark) or mismatches the product,
+    # derive the correct department from the product.
+    if product and department:
+        if product not in options["dept_products"].get(department, []):
+            for dept, prods in options["dept_products"].items():
+                if product in prods:
+                    department = dept
+                    dept_was_invalid = True
+                    break
+    elif product and dept_was_invalid:
         for dept, prods in options["dept_products"].items():
             if product in prods:
                 department = dept
                 break
+
+    # Redirect to the corrected URL so the browser address bar stays clean
+    if dept_was_invalid:
+        params = {}
+        if department:
+            params["department"] = department
+        if product:
+            params["product"] = product
+        if cycle:
+            params["cycle"] = cycle
+        from urllib.parse import urlencode
+        qs = urlencode(params)
+        return RedirectResponse(url=f"/?{qs}" if qs else "/", status_code=302)
 
     # Derive available products from the dept→products mapping
     available_products = options["dept_products"].get(department, []) if department else options["products"]
