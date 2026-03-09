@@ -20,14 +20,16 @@
       width: 1.2rem;
       height: 1.2rem;
       border-radius: .15rem;
-      display: inline-block;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
       vertical-align: middle;
       border: 1px solid rgba(0, 0, 0, .15);
-      text-align: center;
       font-size: .65rem;
       font-weight: 700;
-      line-height: 1.2rem;
+      line-height: 1;
       color: #fff;
+      text-transform: uppercase;
     }
     .color-cell--green  { background-color: #0e8420; }
     .color-cell--orange { background-color: #e95420; }
@@ -113,10 +115,14 @@
     }
     .epic-row__carry-over {
       flex: 0 0 2rem;
-      text-align: center;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
     .epic-row__health {
       flex: 0 0 1.4rem;
+      display: flex;
+      align-items: center;
     }
     .epic-row__summary {
       flex: 1 1 auto;
