@@ -14,7 +14,7 @@
       </a>
     </div>
     {% if selected_department or selected_product or selected_cycle != default_cycle %}
-    <a href="/" class="clear-filters" title="Clear all filters">
+    <a href="/" class="clear-filters" title="Clear all filters" aria-label="Clear all filters">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/><line x1="1" y1="1" x2="23" y2="23"/>
       </svg>
@@ -178,7 +178,7 @@
 
 {% block scripts %}
 <script>
-  var deptProducts = {{ dept_products_json | safe }};
+  var deptProducts = {{ dept_products | tojson }};
   var form = document.getElementById('filter-form');
   var hiddenDept = document.getElementById('hidden-department');
   var hiddenProduct = document.getElementById('hidden-product');

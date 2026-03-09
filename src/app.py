@@ -1139,11 +1139,13 @@ async def roadmap_page(
     available_products = options["products"]
     selected_product = product if product and product in available_products else None
 
-    # Default to the current cycle when none is selected
+    # Default to the current cycle, or the latest available cycle as fallback
     default_cycle = None
     current = [c for c, s in options["cycle_states"].items() if s == "current"]
     if current:
         default_cycle = current[0]
+    elif options["cycles"]:
+        default_cycle = options["cycles"][0]
     if not cycle:
         cycle = default_cycle
 
@@ -1176,7 +1178,7 @@ async def roadmap_page(
             "departments": options["departments"],
             "products": available_products,
             "cycles": options["cycles"],
-            "dept_products_json": json.dumps(filtered_dept_products),
+            "dept_products": filtered_dept_products,
             "cycle_states": options["cycle_states"],
             "selected_department": department or "",
             "selected_product": selected_product or "",
