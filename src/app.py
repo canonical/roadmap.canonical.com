@@ -851,8 +851,8 @@ async def delete_product(product_id: int):
 CYCLE_RE = re.compile(r"^\d{2}\.\d{2}$")
 
 
-async def _query_filter_options(department: str | None = None) -> dict:
-    """Fetch distinct departments, products (filtered by department), and cycle labels for filter dropdowns.
+async def _query_filter_options() -> dict:
+    """Fetch distinct departments, products, and cycle labels for filter dropdowns.
 
     Also returns a ``dept_products`` mapping (department → [product names]) so the
     frontend can dynamically update the product dropdown when the department changes,
@@ -862,11 +862,7 @@ async def _query_filter_options(department: str | None = None) -> dict:
         await cur.execute("SELECT DISTINCT department FROM product ORDER BY department")
         departments = [r[0] for r in await cur.fetchall()]
 
-        # Products for the selected department (or all if none selected)
-        if department:
-            await cur.execute("SELECT DISTINCT name FROM product WHERE department = %s ORDER BY name", (department,))
-        else:
-            await cur.execute("SELECT DISTINCT name FROM product ORDER BY name")
+        await cur.execute("SELECT DISTINCT name FROM product ORDER BY name")
         products = [r[0] for r in await cur.fetchall()]
 
         # Full department → products mapping for client-side filtering
@@ -1133,10 +1129,27 @@ async def roadmap_page(
     cycle: str | None = Query(None),
 ):
     """Render the main roadmap page with server-side Jinja2 templates."""
-    options = await _query_filter_options(department=department)
+    options = await _query_filter_options()
+
+    # Normalise department — drop invalid values
+    if department and department not in options["departments"]:
+        department = None
+
+    # If a product is provided, derive/override department from the product
+    # so that stale bookmarks like ?department=Old&product=Valid still work.
+    if product:
+        for dept, prods in options["dept_products"].items():
+            if product in prods:
+                department = dept
+                break
+
+    # Derive available products from the dept→products mapping
+    if department:
+        available_products = options["dept_products"].get(department, [])
+    else:
+        available_products = options["products"]
 
     # Normalise product — drop empty/invalid
-    available_products = options["products"]
     selected_product = product if product and product in available_products else None
 
     # Default to the current cycle, or the latest available cycle as fallback
@@ -1161,32 +1174,19 @@ async def roadmap_page(
             cycle=cycle,
         )
 
-    filtered_dept_products = options["dept_products"]
-
-    # Find the department for the selected product
-    product_department = ""
-    if selected_product:
-        for dept, prods in options["dept_products"].items():
-            if selected_product in prods:
-                product_department = dept
-                break
-
     return templates.TemplateResponse(
         request,
         "roadmap.html",
         {
-            "departments": options["departments"],
-            "products": available_products,
             "cycles": options["cycles"],
-            "dept_products": filtered_dept_products,
+            "dept_products": options["dept_products"],
             "cycle_states": options["cycle_states"],
             "selected_department": department or "",
             "selected_product": selected_product or "",
-            "product_department": product_department,
+            "product_department": department or "",
             "selected_cycle": cycle or "",
             "default_cycle": default_cycle or "",
             "grouped_items": grouped_items,
             "objective_urls": objective_urls,
-            "cycle_states_in_view": cycle_states,
         },
     )

@@ -186,8 +186,6 @@
   // Auto-submit on cycle change
   document.getElementById('cycle').addEventListener('change', function() { form.submit(); });
 
-
-
   // ── Typeahead helper ──────────────────────────────────────────
   function initTypeahead(inputEl, listEl, items, hiddenEl, onSelect, emptyDisplay) {
     var activeIndex = -1;
@@ -418,8 +416,6 @@
         // Hide entire objective block if no items visible
         ob.style.display = visible === 0 ? 'none' : '';
       });
-
-
     }
 
     legendItems.forEach(function(el) {
