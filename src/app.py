@@ -1208,7 +1208,12 @@ async def roadmap_page(
             "cycle_states": options["cycle_states"],
             "selected_department": department or "",
             "selected_product": selected_product or "",
-            "product_department": department or "",
+            "product_department": next(
+                (d for d, ps in options["dept_products"].items() if selected_product in ps),
+                "",
+            )
+            if selected_product
+            else "",
             "selected_cycle": cycle or "",
             "default_cycle": default_cycle or "",
             "grouped_items": grouped_items,
