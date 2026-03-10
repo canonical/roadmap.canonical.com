@@ -2,30 +2,30 @@
 
 {% block title %}Roadmap{% endblock %}
 
-{% block content %}
-<div class="col-12">
-
-  {# ── Filter bar ──────────────────────────────────────────────── #}
-  <form class="filter-bar" method="get" action="/">
-    <div class="p-form__group">
-      <label for="department">Department</label>
-      <select name="department" id="department" class="p-form-validation__input">
-        <option value="">All departments</option>
-        {% for d in departments %}
-          <option value="{{ d }}" {{ 'selected' if d == selected_department }}>{{ d }}</option>
-        {% endfor %}
-      </select>
+{% block sidebar %}
+<aside class="layout-sidebar">
+  <div class="p-panel__header sidebar-logo">
+    <div class="p-navigation__tagged-logo">
+      <a class="p-navigation__link" href="/" aria-label="Canonical Roadmap - Home">
+        <div class="p-navigation__logo-tag">
+          <img class="p-navigation__logo-icon" src="https://assets.ubuntu.com/v1/82818827-CoF_white.svg" alt="Canonical logo" width="95">
+        </div>
+        <span class="p-navigation__logo-title">Roadmap</span>
+      </a>
     </div>
+    {% if selected_department or selected_product or selected_cycle != default_cycle %}
+    <a href="/" class="clear-filters" title="Clear all filters" aria-label="Clear all filters">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/><line x1="1" y1="1" x2="23" y2="23"/>
+      </svg>
+    </a>
+    {% endif %}
+  </div>
 
-    <div class="p-form__group">
-      <label for="product">Product</label>
-      <select name="product" id="product" class="p-form-validation__input">
-        {% for p in products %}
-          <option value="{{ p }}" {{ 'selected' if p == selected_product }}>{{ p }}</option>
-        {% endfor %}
-      </select>
-    </div>
-
+  {# ── Cycle selector ────────────────────────────────────────────── #}
+  <form class="filter-bar-sidebar" id="filter-form" method="get" action="/">
+    <input type="hidden" name="department" id="hidden-department" value="{{ selected_department or '' }}" />
+    <input type="hidden" name="product" id="hidden-product" value="{{ selected_product or '' }}" />
     <div class="p-form__group">
       <label for="cycle">Cycle</label>
       <select name="cycle" id="cycle" class="p-form-validation__input">
@@ -35,13 +35,28 @@
       </select>
     </div>
 
-    {% if selected_department or selected_product or selected_cycle %}
-      <a href="/" class="p-button">Clear</a>
-    {% endif %}
+    {# ── Department filter ───────────────────────────────────────── #}
+    <div class="p-form__group">
+      <label for="dept-input">Department</label>
+      <div class="typeahead" id="dept-typeahead">
+        <input type="text" class="typeahead__input p-form-validation__input" id="dept-input" placeholder="" autocomplete="off" value="{{ selected_department or 'All' }}" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="dept-list" />
+        <div class="typeahead__list" id="dept-list" role="listbox"></div>
+      </div>
+    </div>
+
+    {# ── Product filter ──────────────────────────────────────────── #}
+    <div class="p-form__group">
+      <label for="product-input">Product</label>
+      <div class="typeahead" id="product-typeahead">
+        <input type="text" class="typeahead__input p-form-validation__input" id="product-input" placeholder="" autocomplete="off" value="{{ selected_product or '' }}" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="product-list" />
+        <div class="typeahead__list" id="product-list" role="listbox"></div>
+      </div>
+    </div>
   </form>
 
-  {# ── Legend (clickable filters) ───────────────────────────────── #}
-  <div id="legend-bar" class="u-sv1" style="display:flex;gap:1rem;flex-wrap:wrap;font-size:.875rem;align-items:flex-start;">
+  {# ── Status filter (legend) ────────────────────────────────────── #}
+  <div class="sidebar-section-title">Status</div>
+  <div id="legend-bar">
     <span class="legend-filter" data-health="completed">
       <span class="color-cell color-cell--green">C</span> Completed
       <span class="legend-stat"></span>
@@ -70,129 +85,273 @@
       <span class="color-cell color-cell--white">&nbsp;</span> Inactive
       <span class="legend-stat"></span>
     </span>
-    <span class="legend-item-static">
-      <span class="carry-over-badge">№</span>
-      Carry-over count
-    </span>
   </div>
 
-  <hr />
+</aside>
+{% endblock %}
 
-  {# ── Cycle rows with product columns ─────────────────────────── #}
-  {% if not grouped_items %}
-    <p class="p-heading--4 u-text--muted">No roadmap items match the current filters.</p>
+{% block content %}
+  {% if not selected_product %}
+    <div style="display: flex; align-items: center; justify-content: center; flex: 1; color: #999;">
+      <span style="font-size: .85rem;">Pick a product to view its roadmap.</span>
+    </div>
   {% endif %}
 
-  {% for cycle_name, objectives_map in grouped_items.items() %}
-  <section class="cycle-section">
-    <div class="product-grid">
-      {% for objective_label, items in objectives_map.items() %}
-      <div class="product-column">
-        <h4>
-          {{ objective_label }}
-          {% if objective_label in objective_urls %}
-            <a href="{{ objective_urls[objective_label] }}" target="_blank" rel="noopener" class="jira-link" title="Open in Jira">
-              <i class="p-icon--external-link"></i>
-            </a>
-          {% endif %}
-          <span class="p-badge">{{ items | length }}</span>
-        </h4>
+  {# ── Macro for rendering an epic row ────────────────────────── #}
+  {% macro epic_row(item) %}
+    {% set health_color = item.color_status.health.color if item.color_status and item.color_status.health else 'white' %}
+    {% set health_label = item.color_status.health.get('label', '') if item.color_status and item.color_status.health else '' %}
+    {% if health_color == 'green' and health_label == 'C' %}
+      {% set health_id = 'completed' %}
+    {% elif health_color == 'green' %}
+      {% set health_id = 'in-progress' %}
+    {% elif health_color == 'orange' %}
+      {% set health_id = 'at-risk' %}
+    {% elif health_color == 'red' %}
+      {% set health_id = 'rejected' %}
+    {% elif health_color == 'blue' %}
+      {% set health_id = 'added' %}
+    {% elif health_color == 'black' %}
+      {% set health_id = 'dropped' %}
+    {% else %}
+      {% set health_id = 'unknown' %}
+    {% endif %}
+    <li class="epic-row" data-health="{{ health_id }}">
+      <span class="epic-row__carry-over">
+        {% if item.color_status and item.color_status.carry_over %}
+          <span class="carry-over-indicator" title="Times carried over from a previous cycle.">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+            {{ item.color_status.carry_over.count }}
+          </span>
+        {% endif %}
+      </span>
+      <span class="epic-row__health">
+        {% if item.color_status and item.color_status.health %}
+          <span class="color-cell color-cell--{{ item.color_status.health.color }}">
+            {{- item.color_status.health.get('label', '') -}}
+          </span>
+        {% endif %}
+      </span>
+      <span class="epic-row__summary">
+        <a href="{{ item.url }}" target="_blank" rel="noopener" class="jira-link summary-link">
+          {{ item.title | truncate(90, True, '…') }}
+          <i class="p-icon--external-link"></i>
+        </a>
+      </span>
+    </li>
+  {% endmacro %}
 
-        <ul class="epic-list">
-            {% for item in items %}
-            {% set health_color = item.color_status.health.color if item.color_status and item.color_status.health else 'white' %}
-            {% set health_label = item.color_status.health.get('label', '') if item.color_status and item.color_status.health else '' %}
-            {% if health_color == 'green' and health_label == 'C' %}
-              {% set health_id = 'completed' %}
-            {% elif health_color == 'green' %}
-              {% set health_id = 'in-progress' %}
-            {% elif health_color == 'orange' %}
-              {% set health_id = 'at-risk' %}
-            {% elif health_color == 'red' %}
-              {% set health_id = 'rejected' %}
-            {% elif health_color == 'blue' %}
-              {% set health_id = 'added' %}
-            {% elif health_color == 'black' %}
-              {% set health_id = 'dropped' %}
-            {% else %}
-              {% set health_id = 'unknown' %}
-            {% endif %}
-            <li class="epic-row" data-health="{{ health_id }}">
-              <span class="epic-row__carry-over">
-                {% if item.color_status and item.color_status.carry_over %}
-                  {% if item.color_status.carry_over.count > 1 %}
-                    <span class="carry-over-badge">{{ item.color_status.carry_over.count }}</span>
-                  {% else %}
-                    <span class="carry-over-badge">&nbsp;</span>
-                  {% endif %}
-                {% endif %}
-              </span>
-              <span class="epic-row__health">
-                {% if item.color_status and item.color_status.health %}
-                  <span class="color-cell color-cell--{{ item.color_status.health.color }}">
-                    {{- item.color_status.health.get('label', '') -}}
-                  </span>
-                {% endif %}
-              </span>
-              <span class="epic-row__summary">
-                <a href="{{ item.url }}" target="_blank" rel="noopener" class="jira-link summary-link">
-                  {{ item.title | truncate(90, True, '…') }}
-                  <i class="p-icon--external-link"></i>
-                </a>
-              </span>
-            </li>
-            {% endfor %}
-        </ul>
-      </div>
-      {% endfor %}
+  {% if selected_product %}
+  <div class="product-header">
+    <span class="product-header__dept">{{ product_department }}</span>
+    <span class="product-header__name">{{ selected_product }}</span>
+  </div>
+  {% if not grouped_items %}
+    <div style="display: flex; align-items: center; justify-content: center; flex: 1; color: #999;">
+      <span style="font-size: .85rem;">No roadmap items match the current filters.</span>
     </div>
-  </section>
+  {% endif %}
+  {% endif %}
+
+  {% for _cycle_name, objectives_map in grouped_items.items() %}
+    {% for objective_label, items in objectives_map.items() %}
+    <div class="objective-block">
+      <h4>
+        {{ objective_label }}
+        {% if objective_label in objective_urls %}
+          <a href="{{ objective_urls[objective_label] }}" target="_blank" rel="noopener" class="jira-link" title="Open in Jira">
+            <i class="p-icon--external-link"></i>
+          </a>
+        {% endif %}
+        <span class="p-badge">{{ items | length }}</span>
+      </h4>
+
+      <ul class="epic-list">
+        {% for item in items %}
+          {{ epic_row(item) }}
+        {% endfor %}
+      </ul>
+    </div>
+    {% endfor %}
   {% endfor %}
-</div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-  // Department → products mapping from the server
-  var deptProducts = {{ dept_products_json | safe }};
+  var deptProducts = {{ dept_products | tojson }};
+  var form = document.getElementById('filter-form');
+  var hiddenDept = document.getElementById('hidden-department');
+  var hiddenProduct = document.getElementById('hidden-product');
 
-  var deptSelect = document.getElementById('department');
-  var productSelect = document.getElementById('product');
-  var form = document.querySelector('.filter-bar');
+  // Auto-submit on cycle change
+  document.getElementById('cycle').addEventListener('change', function() { form.submit(); });
 
-  // When department changes, rebuild the product dropdown and auto-submit
-  deptSelect.addEventListener('change', function() {
-    var dept = deptSelect.value;
-    var products;
+  // ── Typeahead helper ──────────────────────────────────────────
+  function initTypeahead(inputEl, listEl, items, hiddenEl, onSelect, emptyDisplay) {
+    var activeIndex = -1;
 
-    if (dept && deptProducts[dept]) {
-      products = deptProducts[dept];
-    } else {
-      // No department selected: merge all products (sorted)
-      var all = [];
-      Object.keys(deptProducts).forEach(function(d) {
-        deptProducts[d].forEach(function(p) {
-          if (all.indexOf(p) === -1) all.push(p);
-        });
-      });
-      products = all.sort();
+    function getItems() { return typeof items === 'function' ? items() : items; }
+
+    function setExpanded(open) {
+      inputEl.setAttribute('aria-expanded', open ? 'true' : 'false');
     }
 
-    // Rebuild options — always select the first product (no "All" option)
-    productSelect.innerHTML = '';
-    products.forEach(function(p) {
-      var opt = document.createElement('option');
-      opt.value = p;
-      opt.textContent = p;
-      productSelect.appendChild(opt);
+    function clearHighlight() {
+      var opts = listEl.querySelectorAll('.typeahead__option');
+      opts.forEach(function(o) { o.classList.remove('is-highlighted'); o.removeAttribute('aria-selected'); });
+      inputEl.removeAttribute('aria-activedescendant');
+      activeIndex = -1;
+    }
+
+    function highlightIndex(idx) {
+      var opts = listEl.querySelectorAll('.typeahead__option');
+      if (opts.length === 0) return;
+      clearHighlight();
+      if (idx < 0) idx = opts.length - 1;
+      if (idx >= opts.length) idx = 0;
+      activeIndex = idx;
+      opts[activeIndex].classList.add('is-highlighted');
+      opts[activeIndex].setAttribute('aria-selected', 'true');
+      inputEl.setAttribute('aria-activedescendant', opts[activeIndex].id);
+      opts[activeIndex].scrollIntoView({ block: 'nearest' });
+    }
+
+    function render(filter) {
+      listEl.innerHTML = '';
+      activeIndex = -1;
+      var q = (filter || '').toLowerCase();
+      var matches = getItems().filter(function(item) {
+        return !q || item.toLowerCase().indexOf(q) !== -1;
+      });
+      if (matches.length === 0) {
+        listEl.style.display = 'none';
+        setExpanded(false);
+        return;
+      }
+      matches.forEach(function(item, i) {
+        var opt = document.createElement('div');
+        opt.className = 'typeahead__option';
+        opt.setAttribute('role', 'option');
+        opt.id = listEl.id + '-opt-' + i;
+        if (item === (hiddenEl.value || emptyDisplay)) opt.classList.add('is-selected');
+        opt.textContent = item;
+        opt.addEventListener('mousedown', function(e) {
+          e.preventDefault();
+          inputEl.value = item;
+          hiddenEl.value = item;
+          listEl.style.display = 'none';
+          setExpanded(false);
+          onSelect();
+        });
+        listEl.appendChild(opt);
+      });
+      listEl.style.display = 'block';
+      setExpanded(true);
+    }
+
+    // Show all on focus, clear previous selection to show full list
+    inputEl.addEventListener('focus', function() {
+      if (inputEl.value) inputEl.value = '';
+      render('');
     });
 
-    form.submit();
-  });
+    inputEl.addEventListener('input', function() {
+      render(inputEl.value);
+    });
 
-  // Auto-submit on product or cycle change
-  productSelect.addEventListener('change', function() { form.submit(); });
-  document.getElementById('cycle').addEventListener('change', function() { form.submit(); });
+    inputEl.addEventListener('blur', function() {
+      // Delay to allow mousedown on option
+      setTimeout(function() {
+        listEl.style.display = 'none';
+        setExpanded(false);
+        inputEl.value = hiddenEl.value || emptyDisplay || '';
+      }, 150);
+    });
+
+    inputEl.addEventListener('keydown', function(e) {
+      var opts = listEl.querySelectorAll('.typeahead__option');
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (listEl.style.display === 'none') { render(''); return; }
+        highlightIndex(activeIndex + 1);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        highlightIndex(activeIndex - 1);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (activeIndex >= 0 && opts[activeIndex]) {
+          var val = opts[activeIndex].textContent;
+          inputEl.value = val;
+          hiddenEl.value = val;
+          listEl.style.display = 'none';
+          setExpanded(false);
+          onSelect();
+        } else {
+          var q = inputEl.value.trim();
+          if (!q) {
+            hiddenEl.value = '';
+            listEl.style.display = 'none';
+            setExpanded(false);
+            onSelect();
+          } else {
+            var match = getItems().find(function(item) {
+              return item.toLowerCase() === q.toLowerCase();
+            });
+            if (match) {
+              inputEl.value = match;
+              hiddenEl.value = match;
+              listEl.style.display = 'none';
+              setExpanded(false);
+              onSelect();
+            }
+          }
+        }
+      } else if (e.key === 'Escape') {
+        listEl.style.display = 'none';
+        setExpanded(false);
+        inputEl.blur();
+      }
+    });
+  }
+
+  // ── Department typeahead ────────────────────────────────────────
+  (function() {
+    var depts = ['All'].concat(Object.keys(deptProducts).sort());
+    var input = document.getElementById('dept-input');
+    var list = document.getElementById('dept-list');
+
+    initTypeahead(input, list, depts, hiddenDept, function() {
+      if (hiddenDept.value === 'All') hiddenDept.value = '';
+      hiddenProduct.value = '';
+      document.getElementById('product-input').value = '';
+      form.submit();
+    }, 'All');
+  })();
+
+  // ── Product typeahead ──────────────────────────────────────────
+  (function() {
+    function getProducts() {
+      var dept = hiddenDept.value;
+      if (dept && deptProducts[dept]) {
+        return deptProducts[dept].slice().sort();
+      }
+      var all = [];
+      var seen = {};
+      Object.keys(deptProducts).sort().forEach(function(d) {
+        deptProducts[d].forEach(function(p) {
+          if (!seen[p]) { all.push(p); seen[p] = true; }
+        });
+      });
+      return all.sort();
+    }
+
+    var input = document.getElementById('product-input');
+    var list = document.getElementById('product-list');
+
+    initTypeahead(input, list, getProducts, hiddenProduct, function() {
+      form.submit();
+    });
+  })();
 
   // ── Legend health-status filter ──────────────────────────────
   (function() {
@@ -247,23 +406,15 @@
       });
 
       // Update item counts in objective headers
-      document.querySelectorAll('.product-column').forEach(function(col) {
-        var rows = col.querySelectorAll('li[data-health]');
+      document.querySelectorAll('.objective-block').forEach(function(ob) {
+        var rows = ob.querySelectorAll('li[data-health]');
         var visible = 0;
         rows.forEach(function(r) { if (r.style.display !== 'none') visible++; });
-        var badge = col.querySelector('h4 .p-badge');
+        var badge = ob.querySelector('h4 .p-badge');
         if (badge) badge.textContent = visible;
 
-        // Hide entire objective section if no items visible
-        col.style.display = visible === 0 ? 'none' : '';
-      });
-
-      // Hide entire cycle section if all objectives hidden
-      document.querySelectorAll('.cycle-section').forEach(function(sec) {
-        var cols = sec.querySelectorAll('.product-column');
-        var anyVisible = false;
-        cols.forEach(function(c) { if (c.style.display !== 'none') anyVisible = true; });
-        sec.style.display = anyVisible ? '' : 'none';
+        // Hide entire objective block if no items visible
+        ob.style.display = visible === 0 ? 'none' : '';
       });
     }
 
