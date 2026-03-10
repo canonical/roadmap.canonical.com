@@ -921,7 +921,7 @@ async def _query_frozen_items_for_cycle(
 
     where = " WHERE " + " AND ".join(clauses)
     query = (
-        "SELECT f.jira_key, f.title, f.product_name AS product, "
+        "SELECT f.jira_key, f.title, f.product_name AS product, f.department, "
         "       f.color_status, f.url, f.tags, "
         "       f.parent_key, f.parent_summary, f.rank, f.parent_rank "
         f"FROM cycle_freeze_item f{where} "
@@ -984,7 +984,7 @@ async def _query_roadmap_items(
 
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     query = (
-        "SELECT r.id, r.jira_key, r.title, p.name AS product, "
+        "SELECT r.id, r.jira_key, r.title, p.name AS product, p.department, "
         "       r.color_status, r.url, r.tags, "
         "       r.parent_key, r.parent_summary, r.rank, r.parent_rank "
         "FROM roadmap_item r "
@@ -1133,39 +1133,85 @@ async def roadmap_page(
     cycle: str | None = Query(None),
 ):
     """Render the main roadmap page with server-side Jinja2 templates."""
-    options = await _query_filter_options(department=department)
+    options = await _query_filter_options()
 
-    # Force a product selection — if none chosen, default to the first available
-    available_products = options["products"]
-    if not product or product not in available_products:
-        product = available_products[0] if available_products else None
+    # Normalise department — drop invalid values; track whether it was bad
+    # so we can correct it from the product below.
+    dept_was_invalid = False
+    if department and department not in options["departments"]:
+        department = None
+        dept_was_invalid = True
 
-    # Default to the current cycle when none is selected
-    if not cycle:
-        current = [c for c, s in options["cycle_states"].items() if s == "current"]
-        if current:
-            cycle = current[0]
+    # When department was invalid (stale bookmark) or mismatches the product,
+    # derive the correct department from the product.
+    if product and department:
+        if product not in options["dept_products"].get(department, []):
+            for dept, prods in options["dept_products"].items():
+                if product in prods:
+                    department = dept
+                    dept_was_invalid = True
+                    break
+    elif product and dept_was_invalid:
+        for dept, prods in options["dept_products"].items():
+            if product in prods:
+                department = dept
+                break
 
-    grouped_items, objective_urls, cycle_states = await _query_roadmap_items(
-        department=department,
-        product=product,
-        cycle=cycle,
-    )
+    # Redirect to the corrected URL so the browser address bar stays clean
+    if dept_was_invalid:
+        params = {}
+        if department:
+            params["department"] = department
+        if product:
+            params["product"] = product
+        if cycle:
+            params["cycle"] = cycle
+        from urllib.parse import urlencode
+
+        qs = urlencode(params)
+        return RedirectResponse(url=f"/?{qs}" if qs else "/", status_code=302)
+
+    # Derive available products from the dept→products mapping
+    available_products = options["dept_products"].get(department, []) if department else options["products"]
+
+    # Normalise product — drop empty/invalid
+    selected_product = product if product and product in available_products else None
+
+    # Default to the current cycle, or the latest available cycle as fallback
+    default_cycle = None
+    current = [c for c, s in options["cycle_states"].items() if s == "current"]
+    if current:
+        default_cycle = current[0]
+    elif options["cycles"]:
+        default_cycle = options["cycles"][0]
+    if not cycle or cycle not in options["cycles"]:
+        cycle = default_cycle
+
+    # Skip querying if no product selected
+    if not selected_product:
+        grouped_items: OrderedDict = OrderedDict()
+        objective_urls: dict[str, str] = {}
+        cycle_states: dict[str, str] = {}
+    else:
+        grouped_items, objective_urls, cycle_states = await _query_roadmap_items(
+            department=department,
+            product=selected_product,
+            cycle=cycle,
+        )
 
     return templates.TemplateResponse(
         request,
         "roadmap.html",
         {
-            "departments": options["departments"],
-            "products": available_products,
             "cycles": options["cycles"],
-            "dept_products_json": json.dumps(options["dept_products"]),
+            "dept_products": options["dept_products"],
             "cycle_states": options["cycle_states"],
             "selected_department": department or "",
-            "selected_product": product or "",
+            "selected_product": selected_product or "",
+            "product_department": department or "",
             "selected_cycle": cycle or "",
+            "default_cycle": default_cycle or "",
             "grouped_items": grouped_items,
             "objective_urls": objective_urls,
-            "cycle_states_in_view": cycle_states,
         },
     )
