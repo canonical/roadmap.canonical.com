@@ -243,7 +243,7 @@ def test_roadmap_page_with_data(client):
             )
         conn.commit()
 
-    resp = client.get("/", params={"cycle": "25.10"})
+    resp = client.get("/", params={"cycle": "25.10", "product": "Uncategorized"})
     assert resp.status_code == 200
     assert "HTML-1" in resp.text
     assert "Render test" in resp.text
@@ -271,7 +271,7 @@ def test_roadmap_page_with_parent(client):
             )
         conn.commit()
 
-    resp = client.get("/")
+    resp = client.get("/", params={"product": "Uncategorized"})
     assert resp.status_code == 200
     assert "OBJ-1" in resp.text
     # Objective heading shows summary, not the Jira key
@@ -321,11 +321,11 @@ def test_roadmap_page_item_in_multiple_cycles(client):
         conn.commit()
 
     # Both cycles should be available in the filter dropdown
-    resp = client.get("/", params={"cycle": "25.10"})
+    resp = client.get("/", params={"cycle": "25.10", "product": "Uncategorized"})
     assert resp.status_code == 200
     assert "MULTI-1" in resp.text
 
-    resp = client.get("/", params={"cycle": "26.04"})
+    resp = client.get("/", params={"cycle": "26.04", "product": "Uncategorized"})
     assert resp.status_code == 200
     assert "MULTI-1" in resp.text
 
@@ -347,7 +347,7 @@ def test_roadmap_page_filter_by_cycle(client):
                 )
         conn.commit()
 
-    resp = client.get("/", params={"cycle": "26.04"})
+    resp = client.get("/", params={"cycle": "26.04", "product": "Uncategorized"})
     assert resp.status_code == 200
     assert "CY-2" in resp.text
     assert "CY-1" not in resp.text
