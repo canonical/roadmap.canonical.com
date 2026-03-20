@@ -75,6 +75,16 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("sync_interval_seconds", "APP_SYNC_INTERVAL_SECONDS"),
     )
 
+    # Maximum percentage (0–100) of existing issues that may be removed in a
+    # single sync.  If the proportion of stale keys exceeds this threshold the
+    # cleanup step is skipped and an error is logged — this prevents an expired
+    # or degraded API token from nuking the database when Jira only returns
+    # issues from public projects.
+    stale_removal_threshold_pct: int = Field(
+        default=20,
+        validation_alias=AliasChoices("stale_removal_threshold_pct", "APP_STALE_REMOVAL_THRESHOLD_PCT"),
+    )
+
     model_config = {"env_file": str(_ENV_FILE), "extra": "ignore"}
 
 
