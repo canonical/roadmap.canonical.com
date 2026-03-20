@@ -1,10 +1,12 @@
 """Tests for the Jira sync pipeline (Phase 2 only — no live Jira calls)."""
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 from psycopg.types.json import Jsonb
 
 from src.database import get_db_connection
-from src.jira_sync import JiraSourceRule, _build_jql, _match_issue_to_product, process_raw_jira_data
+from src.jira_sync import JiraSourceRule, _build_jql, _match_issue_to_product, process_raw_jira_data, sync_jira_data
 
 
 def _insert_raw_issue(jira_key: str, fields: dict) -> None:
@@ -497,3 +499,98 @@ def test_build_jql_empty_filter(monkeypatch):
 
     jql = _build_jql()
     assert jql == 'project in ("XYZ") AND labels in (26.04)'
+
+
+# ---------------------------------------------------------------------------
+# Stale issue cleanup
+# ---------------------------------------------------------------------------
+
+
+def _make_mock_issue(key: str, labels: list[str] | None = None, parent: dict | None = None) -> MagicMock:
+    """Create a mock Jira issue object matching the jira library's interface."""
+    fields = {
+        "summary": f"Summary for {key}",
+        "status": {"name": "Open"},
+        "labels": labels or [],
+        "customfield_10019": "",
+    }
+    if parent:
+        fields["parent"] = parent
+    issue = MagicMock()
+    issue.key = key
+    issue.raw = {"fields": fields}
+    return issue
+
+
+def test_sync_removes_stale_issues():
+    """Issues that no longer match JQL are removed from jira_issue_raw and roadmap_item."""
+    # Pre-populate DB with an issue that was synced previously
+    _insert_raw_issue("STALE-1", {"summary": "Old epic", "status": {"name": "Open"}, "labels": ["25.10"]})
+    process_raw_jira_data()
+
+    # Verify it exists
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM roadmap_item WHERE jira_key = 'STALE-1'")
+        assert cur.fetchone() is not None
+
+    # Set up cycle + project config so _build_jql works
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute("INSERT INTO product (name, department) VALUES ('TestProd', 'TestDept') RETURNING id")
+        pid = cur.fetchone()[0]
+        cur.execute(
+            "INSERT INTO product_jira_source (product_id, jira_project_key) VALUES (%s, 'NEW')", (pid,)
+        )
+        cur.execute("INSERT INTO cycle_config (cycle, state) VALUES ('26.04', 'current')")
+        conn.commit()
+
+    # Mock Jira to return only a NEW issue (STALE-1 no longer matches)
+    mock_jira_instance = MagicMock()
+    new_issue = _make_mock_issue("NEW-1", labels=["26.04"])
+    mock_jira_instance.search_issues.return_value = [new_issue]
+
+    with patch("src.jira_sync.JIRA", return_value=mock_jira_instance):
+        sync_jira_data()
+
+    # STALE-1 should be gone from both tables
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM jira_issue_raw WHERE jira_key = 'STALE-1'")
+        assert cur.fetchone() is None, "Stale issue should be removed from jira_issue_raw"
+
+        cur.execute("SELECT 1 FROM roadmap_item WHERE jira_key = 'STALE-1'")
+        assert cur.fetchone() is None, "Stale issue should be removed from roadmap_item"
+
+    # NEW-1 should exist in jira_issue_raw
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM jira_issue_raw WHERE jira_key = 'NEW-1'")
+        assert cur.fetchone() is not None, "New issue should be present in jira_issue_raw"
+
+
+def test_sync_keeps_current_issues():
+    """Issues that still match JQL are NOT removed during sync."""
+    _insert_raw_issue("KEEP-1", {"summary": "Still relevant", "status": {"name": "Open"}, "labels": ["26.04"]})
+    process_raw_jira_data()
+
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute("INSERT INTO product (name, department) VALUES ('KeepProd', 'KeepDept') RETURNING id")
+        pid = cur.fetchone()[0]
+        cur.execute(
+            "INSERT INTO product_jira_source (product_id, jira_project_key) VALUES (%s, 'KEEP')", (pid,)
+        )
+        cur.execute("INSERT INTO cycle_config (cycle, state) VALUES ('26.04', 'current')")
+        conn.commit()
+
+    # Mock Jira to return the same issue
+    mock_jira_instance = MagicMock()
+    keep_issue = _make_mock_issue("KEEP-1", labels=["26.04"])
+    mock_jira_instance.search_issues.return_value = [keep_issue]
+
+    with patch("src.jira_sync.JIRA", return_value=mock_jira_instance):
+        sync_jira_data()
+
+    # KEEP-1 should still exist
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM jira_issue_raw WHERE jira_key = 'KEEP-1'")
+        assert cur.fetchone() is not None
+
+        cur.execute("SELECT 1 FROM roadmap_item WHERE jira_key = 'KEEP-1'")
+        assert cur.fetchone() is not None

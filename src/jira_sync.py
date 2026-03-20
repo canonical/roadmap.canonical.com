@@ -122,6 +122,8 @@ def sync_jira_data() -> int:
             except Exception:
                 logger.exception("Failed to fetch parent ranks for chunk %d–%d", i, i + len(chunk))
 
+    fetched_keys = {issue.key for issue in issues}
+
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             for issue in issues:
@@ -142,6 +144,19 @@ def sync_jira_data() -> int:
                     """,
                     (issue.key, Jsonb(raw)),
                 )
+
+            # Remove stale issues that no longer match the JQL query
+            # (e.g. a label was removed from the Epic in Jira).
+            # Only delete items whose jira_key is NOT in the current fetch set.
+            cur.execute("SELECT jira_key FROM jira_issue_raw")
+            existing_keys = {row[0] for row in cur.fetchall()}
+            stale_keys = existing_keys - fetched_keys
+            if stale_keys:
+                stale_list = sorted(stale_keys)
+                logger.info("Removing %d stale issues no longer matching JQL: %s", len(stale_list), stale_list)
+                cur.execute("DELETE FROM roadmap_item WHERE jira_key = ANY(%s)", (stale_list,))
+                cur.execute("DELETE FROM jira_issue_raw WHERE jira_key = ANY(%s)", (stale_list,))
+
         conn.commit()
 
     return len(issues)
