@@ -522,7 +522,27 @@ def _make_mock_issue(key: str, labels: list[str] | None = None, parent: dict | N
     return issue
 
 
-def test_sync_removes_stale_issues():
+def _setup_jql_prereqs(project_key: str = "NEW") -> None:
+    """Insert the minimum cycle_config + product_jira_source rows so _build_jql works."""
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO product (name, department) VALUES (%s, 'Dept') "
+            "ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id",
+            (f"Prod-{project_key}",),
+        )
+        pid = cur.fetchone()[0]
+        cur.execute(
+            "INSERT INTO product_jira_source (product_id, jira_project_key) VALUES (%s, %s)",
+            (pid, project_key),
+        )
+        cur.execute(
+            "INSERT INTO cycle_config (cycle, state) VALUES ('26.04', 'current') "
+            "ON CONFLICT (cycle) DO NOTHING"
+        )
+        conn.commit()
+
+
+def test_sync_removes_stale_issues(monkeypatch):
     """Issues that no longer match JQL are removed from jira_issue_raw and roadmap_item."""
     # Pre-populate DB with an issue that was synced previously
     _insert_raw_issue("STALE-1", {"summary": "Old epic", "status": {"name": "Open"}, "labels": ["25.10"]})
@@ -533,20 +553,17 @@ def test_sync_removes_stale_issues():
         cur.execute("SELECT 1 FROM roadmap_item WHERE jira_key = 'STALE-1'")
         assert cur.fetchone() is not None
 
-    # Set up cycle + project config so _build_jql works
-    with get_db_connection() as conn, conn.cursor() as cur:
-        cur.execute("INSERT INTO product (name, department) VALUES ('TestProd', 'TestDept') RETURNING id")
-        pid = cur.fetchone()[0]
-        cur.execute(
-            "INSERT INTO product_jira_source (product_id, jira_project_key) VALUES (%s, 'NEW')", (pid,)
-        )
-        cur.execute("INSERT INTO cycle_config (cycle, state) VALUES ('26.04', 'current')")
-        conn.commit()
+    _setup_jql_prereqs("NEW")
 
     # Mock Jira to return only a NEW issue (STALE-1 no longer matches)
     mock_jira_instance = MagicMock()
     new_issue = _make_mock_issue("NEW-1", labels=["26.04"])
     mock_jira_instance.search_issues.return_value = [new_issue]
+
+    # Raise the threshold so 1-of-2 (50%) removal is allowed
+    import src.jira_sync as jira_sync_mod
+
+    monkeypatch.setattr(jira_sync_mod.settings, "stale_removal_threshold_pct", 60)
 
     with patch("src.jira_sync.JIRA", return_value=mock_jira_instance):
         sync_jira_data()
@@ -570,14 +587,7 @@ def test_sync_keeps_current_issues():
     _insert_raw_issue("KEEP-1", {"summary": "Still relevant", "status": {"name": "Open"}, "labels": ["26.04"]})
     process_raw_jira_data()
 
-    with get_db_connection() as conn, conn.cursor() as cur:
-        cur.execute("INSERT INTO product (name, department) VALUES ('KeepProd', 'KeepDept') RETURNING id")
-        pid = cur.fetchone()[0]
-        cur.execute(
-            "INSERT INTO product_jira_source (product_id, jira_project_key) VALUES (%s, 'KEEP')", (pid,)
-        )
-        cur.execute("INSERT INTO cycle_config (cycle, state) VALUES ('26.04', 'current')")
-        conn.commit()
+    _setup_jql_prereqs("KEEP")
 
     # Mock Jira to return the same issue
     mock_jira_instance = MagicMock()
@@ -594,3 +604,71 @@ def test_sync_keeps_current_issues():
 
         cur.execute("SELECT 1 FROM roadmap_item WHERE jira_key = 'KEEP-1'")
         assert cur.fetchone() is not None
+
+
+def test_sync_threshold_prevents_mass_deletion(monkeypatch):
+    """When stale issues exceed the safety threshold, deletion is skipped entirely."""
+    # Pre-populate 5 issues in the DB
+    for i in range(1, 6):
+        _insert_raw_issue(f"OLD-{i}", {"summary": f"Old {i}", "status": {"name": "Open"}, "labels": ["25.10"]})
+    process_raw_jira_data()
+
+    _setup_jql_prereqs("SURV")
+
+    # Mock Jira to return only 1 issue — 4 of 6 (67%) would be stale
+    mock_jira_instance = MagicMock()
+    survivor = _make_mock_issue("SURV-1", labels=["26.04"])
+    mock_jira_instance.search_issues.return_value = [survivor]
+
+    # Default threshold is 20%, so 67% stale should be blocked
+    import src.jira_sync as jira_sync_mod
+
+    monkeypatch.setattr(jira_sync_mod.settings, "stale_removal_threshold_pct", 20)
+
+    with patch("src.jira_sync.JIRA", return_value=mock_jira_instance):
+        sync_jira_data()
+
+    # ALL old issues should still be present — deletion was skipped
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM jira_issue_raw WHERE jira_key LIKE 'OLD-%%'")
+        assert cur.fetchone()[0] == 5, "Old issues must be preserved when threshold is exceeded"
+
+        cur.execute("SELECT count(*) FROM roadmap_item WHERE jira_key LIKE 'OLD-%%'")
+        assert cur.fetchone()[0] == 5, "Old roadmap_items must be preserved when threshold is exceeded"
+
+
+def test_sync_threshold_allows_small_cleanup(monkeypatch):
+    """When stale issues are below the threshold, they are removed normally."""
+    # Pre-populate 10 issues, 1 will become stale (10% < 20% threshold)
+    for i in range(1, 11):
+        _insert_raw_issue(f"BULK-{i}", {"summary": f"Bulk {i}", "status": {"name": "Open"}, "labels": ["26.04"]})
+    process_raw_jira_data()
+
+    _setup_jql_prereqs("BULK")
+
+    # Mock Jira to return 10 of the 11 keys (BULK-1..10 but not the
+    # pre-existing BULK-1 will be replaced) — only BULK-1 is stale
+    mock_jira_instance = MagicMock()
+    # Return issues BULK-2 through BULK-10 (9 issues). BULK-1 is stale.
+    # 1 of 11 existing = ~9.1% stale, under default 20%.
+    returned_issues = [_make_mock_issue(f"BULK-{i}", labels=["26.04"]) for i in range(2, 11)]
+    mock_jira_instance.search_issues.return_value = returned_issues
+
+    import src.jira_sync as jira_sync_mod
+
+    monkeypatch.setattr(jira_sync_mod.settings, "stale_removal_threshold_pct", 20)
+
+    with patch("src.jira_sync.JIRA", return_value=mock_jira_instance):
+        sync_jira_data()
+
+    with get_db_connection() as conn, conn.cursor() as cur:
+        # BULK-1 should be removed
+        cur.execute("SELECT 1 FROM jira_issue_raw WHERE jira_key = 'BULK-1'")
+        assert cur.fetchone() is None, "BULK-1 should be removed (below threshold)"
+
+        cur.execute("SELECT 1 FROM roadmap_item WHERE jira_key = 'BULK-1'")
+        assert cur.fetchone() is None, "BULK-1 roadmap_item should be removed (below threshold)"
+
+        # BULK-2 through BULK-10 should still exist
+        cur.execute("SELECT count(*) FROM jira_issue_raw WHERE jira_key LIKE 'BULK-%%'")
+        assert cur.fetchone()[0] == 9

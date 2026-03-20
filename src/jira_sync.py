@@ -148,14 +148,32 @@ def sync_jira_data() -> int:
             # Remove stale issues that no longer match the JQL query
             # (e.g. a label was removed from the Epic in Jira).
             # Only delete items whose jira_key is NOT in the current fetch set.
+            #
+            # Safety guard: if the proportion of stale keys is suspiciously high
+            # (e.g. an expired API token causes Jira to return only public-project
+            # issues), skip the deletion to avoid nuking the database.
             cur.execute("SELECT jira_key FROM jira_issue_raw")
             existing_keys = {row[0] for row in cur.fetchall()}
             stale_keys = existing_keys - fetched_keys
             if stale_keys:
-                stale_list = sorted(stale_keys)
-                logger.info("Removing %d stale issues no longer matching JQL: %s", len(stale_list), stale_list)
-                cur.execute("DELETE FROM roadmap_item WHERE jira_key = ANY(%s)", (stale_list,))
-                cur.execute("DELETE FROM jira_issue_raw WHERE jira_key = ANY(%s)", (stale_list,))
+                stale_pct = len(stale_keys) / len(existing_keys) * 100 if existing_keys else 0
+                threshold = settings.stale_removal_threshold_pct
+                if stale_pct > threshold:
+                    logger.error(
+                        "Stale-issue removal aborted: %d of %d issues (%.1f%%) would be removed, "
+                        "which exceeds the safety threshold of %d%%. "
+                        "This may indicate an expired API token or degraded Jira permissions. "
+                        "Verify credentials and re-sync, or adjust STALE_REMOVAL_THRESHOLD_PCT.",
+                        len(stale_keys),
+                        len(existing_keys),
+                        stale_pct,
+                        threshold,
+                    )
+                else:
+                    stale_list = sorted(stale_keys)
+                    logger.info("Removing %d stale issues no longer matching JQL: %s", len(stale_list), stale_list)
+                    cur.execute("DELETE FROM roadmap_item WHERE jira_key = ANY(%s)", (stale_list,))
+                    cur.execute("DELETE FROM jira_issue_raw WHERE jira_key = ANY(%s)", (stale_list,))
 
         conn.commit()
 
