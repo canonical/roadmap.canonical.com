@@ -186,6 +186,36 @@
   // Auto-submit on cycle change
   document.getElementById('cycle').addEventListener('change', function() { form.submit(); });
 
+  // ── Persist last selection to localStorage ────────────────────
+  (function() {
+    // Save current selection on every form submit
+    form.addEventListener('submit', function() {
+      var params = new URLSearchParams();
+      var dept = hiddenDept.value;
+      var prod = hiddenProduct.value;
+      var cyc = document.getElementById('cycle').value;
+      if (dept) params.set('department', dept);
+      if (prod) params.set('product', prod);
+      if (cyc)  params.set('cycle', cyc);
+      if (params.toString()) {
+        localStorage.setItem('roadmap_last_selection', params.toString());
+      }
+    });
+
+    // Also save the initial state if we arrived with query params
+    if (window.location.search) {
+      localStorage.setItem('roadmap_last_selection', window.location.search.substring(1));
+    }
+
+    // Clear localStorage when "Clear all filters" is clicked
+    var clearLink = document.querySelector('.clear-filters');
+    if (clearLink) {
+      clearLink.addEventListener('click', function() {
+        localStorage.removeItem('roadmap_last_selection');
+      });
+    }
+  })();
+
   // ── Typeahead helper ──────────────────────────────────────────
   function initTypeahead(inputEl, listEl, items, hiddenEl, onSelect, emptyDisplay) {
     var activeIndex = -1;

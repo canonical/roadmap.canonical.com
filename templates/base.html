@@ -8,6 +8,18 @@
       type="image/x-icon">
   <title>{% block title %}Roadmap{% endblock %}</title>
 
+  <!-- Restore last filter selection when landing on bare "/" -->
+  <script>
+    (function() {
+      if (window.location.pathname === '/' && !window.location.search) {
+        var saved = localStorage.getItem('roadmap_last_selection');
+        if (saved) {
+          window.location.replace('/?' + saved);
+        }
+      }
+    })();
+  </script>
+
   <!-- Vanilla Framework from CDN -->
   <link rel="stylesheet" href="https://assets.ubuntu.com/v1/vanilla-framework-version-4.21.0.min.css" />
 
