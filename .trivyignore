@@ -2,3 +2,4 @@
 # crypto/tls: Unexpected session resumption in crypto/tls
 # https://avd.aquasec.com/nvd/cve-2025-68121
 CVE-2025-68121
+CVE-2026-25679
