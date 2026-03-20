@@ -536,8 +536,7 @@ def _setup_jql_prereqs(project_key: str = "NEW") -> None:
             (pid, project_key),
         )
         cur.execute(
-            "INSERT INTO cycle_config (cycle, state) VALUES ('26.04', 'current') "
-            "ON CONFLICT (cycle) DO NOTHING"
+            "INSERT INTO cycle_config (cycle, state) VALUES ('26.04', 'current') ON CONFLICT (cycle) DO NOTHING"
         )
         conn.commit()
 
