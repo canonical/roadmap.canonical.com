@@ -27,7 +27,7 @@ pydantic-settings==2.13.1
 pydantic_core==2.41.5
 python-dotenv==1.2.1
 PyYAML==6.0.3
-requests==2.32.5
+requests==2.33.0
 requests-oauthlib==2.0.0
 requests-toolbelt==1.0.0
 starlette==0.52.1
