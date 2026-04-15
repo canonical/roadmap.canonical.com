@@ -1038,28 +1038,23 @@ async def _query_roadmap_items(
             if c in frozen_map:
                 continue
 
-            # Future cycle override: force all items to white/Inactive
+            # Carry-over = number of cycle labels chronologically before this cycle
+            display_item = dict(item)
+            item_cycle_labels = [t for t in tags if CYCLE_RE.match(t)]
+            prior_count = sum(1 for lbl in item_cycle_labels if lbl < c)
+            carry_over = {"color": "purple", "count": prior_count} if prior_count > 0 else None
+
+            # Future cycle override: force health to white/Inactive but keep carry-over
             if c in future_cycle_labels:
-                display_item = dict(item)
                 display_item["color_status"] = {
                     "health": {"color": "white"},
-                    "carry_over": None,
+                    "carry_over": carry_over,
                 }
-                raw.setdefault(c, {}).setdefault(objective_label, []).append(display_item)
             else:
-                # Carry-over = number of cycle labels chronologically before this cycle
-                display_item = dict(item)
-                item_cs = display_item.get("color_status") or {}
-                item_cycle_labels = [t for t in tags if CYCLE_RE.match(t)]
-                prior_count = sum(1 for lbl in item_cycle_labels if lbl < c)
-                if prior_count > 0:
-                    item_cs = dict(item_cs)
-                    item_cs["carry_over"] = {"color": "purple", "count": prior_count}
-                else:
-                    item_cs = dict(item_cs)
-                    item_cs["carry_over"] = None
+                item_cs = dict(display_item.get("color_status") or {})
+                item_cs["carry_over"] = carry_over
                 display_item["color_status"] = item_cs
-                raw.setdefault(c, {}).setdefault(objective_label, []).append(display_item)
+            raw.setdefault(c, {}).setdefault(objective_label, []).append(display_item)
 
             state = config_map[c]["state"] if c in config_map else None
             cycle_states_in_view[c] = state
