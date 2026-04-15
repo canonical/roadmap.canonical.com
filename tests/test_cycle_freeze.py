@@ -717,6 +717,126 @@ def test_roadmap_page_carry_over_zero_when_no_frozen(client):
     assert items[0]["color_status"]["carry_over"] is None
 
 
+def test_roadmap_page_carry_over_in_future_cycle(client):
+    """Future cycle items should still show carry-over from prior cycles."""
+    pid = _insert_product("FutureCarryProd")
+    # Item in current 26.04 + future 26.10
+    _insert_roadmap_item(
+        "FC-1",
+        "Future carry item",
+        "In Progress",
+        "green",
+        pid,
+        tags=["26.04", "26.10"],
+        parent_key="OBJ-FC",
+        parent_summary="Future Carry Obj",
+    )
+
+    register_cycle("26.04", state="current")
+    register_cycle("26.10", state="future")
+
+    import asyncio
+
+    from src.app import _query_roadmap_items
+
+    loop = asyncio.new_event_loop()
+    try:
+        grouped, _, _ = loop.run_until_complete(_query_roadmap_items(product="FutureCarryProd", cycle="26.10"))
+    finally:
+        loop.close()
+
+    assert "26.10" in grouped
+    items = []
+    for obj_items in grouped["26.10"].values():
+        items.extend(obj_items)
+
+    assert len(items) == 1
+    # Health should be white (future override)
+    assert items[0]["color_status"]["health"]["color"] == "white"
+    # But carry-over should count 26.04 as a prior cycle
+    co = items[0]["color_status"]["carry_over"]
+    assert co is not None
+    assert co["count"] == 1
+    assert co["color"] == "purple"
+
+
+def test_roadmap_page_carry_over_in_future_cycle_multiple_prior(client):
+    """Future cycle with multiple prior cycles should count all of them."""
+    pid = _insert_product("FutureMultiProd")
+    _insert_roadmap_item(
+        "FM-1",
+        "Future multi carry",
+        "In Progress",
+        "green",
+        pid,
+        tags=["25.10", "26.04", "26.10"],
+        parent_key="OBJ-FM",
+        parent_summary="Future Multi Obj",
+    )
+
+    register_cycle("25.10", state="frozen")
+    register_cycle("26.04", state="current")
+    register_cycle("26.10", state="future")
+
+    import asyncio
+
+    from src.app import _query_roadmap_items
+
+    loop = asyncio.new_event_loop()
+    try:
+        grouped, _, _ = loop.run_until_complete(_query_roadmap_items(product="FutureMultiProd", cycle="26.10"))
+    finally:
+        loop.close()
+
+    assert "26.10" in grouped
+    items = []
+    for obj_items in grouped["26.10"].values():
+        items.extend(obj_items)
+
+    assert len(items) == 1
+    assert items[0]["color_status"]["health"]["color"] == "white"
+    co = items[0]["color_status"]["carry_over"]
+    assert co is not None
+    assert co["count"] == 2
+    assert co["color"] == "purple"
+
+
+def test_roadmap_page_no_carry_over_in_future_cycle_single_label(client):
+    """Future cycle item with only its own label should have no carry-over."""
+    pid = _insert_product("FutureSingleProd")
+    _insert_roadmap_item(
+        "FS-1",
+        "Future single",
+        "Open",
+        "white",
+        pid,
+        tags=["26.10"],
+        parent_key="OBJ-FS",
+        parent_summary="Future Single Obj",
+    )
+
+    register_cycle("26.04", state="current")
+    register_cycle("26.10", state="future")
+
+    import asyncio
+
+    from src.app import _query_roadmap_items
+
+    loop = asyncio.new_event_loop()
+    try:
+        grouped, _, _ = loop.run_until_complete(_query_roadmap_items(product="FutureSingleProd", cycle="26.10"))
+    finally:
+        loop.close()
+
+    assert "26.10" in grouped
+    items = []
+    for obj_items in grouped["26.10"].values():
+        items.extend(obj_items)
+
+    assert len(items) == 1
+    assert items[0]["color_status"]["carry_over"] is None
+
+
 # ===========================================================================
 # Full lifecycle scenario test
 # ===========================================================================
