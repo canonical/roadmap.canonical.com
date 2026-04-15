@@ -200,6 +200,27 @@ def test_carry_over_current_cycle_ignores_non_cycle_labels():
     assert result["carry_over"] == {"color": "purple", "count": 1}
 
 
+def test_carry_over_future_cycle_two_labels():
+    """Labels 26.04, 26.10 viewed in future 26.10 → carry-over count 1."""
+    fields = {"status": {"name": "In Progress"}, "labels": ["26.04", "26.10"]}
+    result = calculate_epic_color(fields, current_cycle="26.10")
+    assert result["carry_over"] == {"color": "purple", "count": 1}
+
+
+def test_carry_over_future_cycle_three_labels():
+    """Labels 25.10, 26.04, 26.10 viewed in future 26.10 → carry-over count 2."""
+    fields = {"status": {"name": "In Progress"}, "labels": ["25.10", "26.04", "26.10"]}
+    result = calculate_epic_color(fields, current_cycle="26.10")
+    assert result["carry_over"] == {"color": "purple", "count": 2}
+
+
+def test_carry_over_future_cycle_only_future_label():
+    """Single future label 26.10 → no carry-over."""
+    fields = {"status": {"name": "In Progress"}, "labels": ["26.10"]}
+    result = calculate_epic_color(fields, current_cycle="26.10")
+    assert result["carry_over"] is None
+
+
 # ---------------------------------------------------------------------------
 # Done overrides roadmap_state (highest priority)
 # ---------------------------------------------------------------------------
