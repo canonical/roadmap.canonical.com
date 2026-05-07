@@ -83,7 +83,7 @@ def calculate_epic_color(
     # Special case: Added (blue) + Done → blue with "C" label.
     state_color_map = {
         "At Risk": "orange",
-        "Excluded": "red",
+        "Missed": "red",
         "Added": "blue",
         "Dropped": "black",
     }

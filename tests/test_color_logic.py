@@ -110,11 +110,11 @@ def test_emoji_at_risk_state():
     assert result["health"]["color"] == "orange"
 
 
-def test_emoji_excluded_state():
-    """Emoji-prefixed '🟥 Excluded' should be treated as 'Excluded'."""
+def test_emoji_missed_state():
+    """Emoji-prefixed '🟥 Missed' should be treated as 'Missed'."""
     fields = {
         "status": {"name": "Open"},
-        "customfield_10968": {"value": "🟥 Excluded"},
+        "customfield_10968": {"value": "🟥 Missed"},
         "labels": [],
     }
     result = calculate_epic_color(fields)
@@ -237,11 +237,11 @@ def test_done_overrides_at_risk():
     assert result["health"] == {"color": "green", "label": "C"}
 
 
-def test_done_overrides_excluded():
-    """Done + Excluded → green completed (Done has highest priority)."""
+def test_done_overrides_missed():
+    """Done + Missed → green completed (Done has highest priority)."""
     fields = {
         "status": {"name": "Done"},
-        "customfield_10968": {"value": "🟥 Excluded"},
+        "customfield_10968": {"value": "🟥 Missed"},
         "labels": [],
     }
     result = calculate_epic_color(fields)

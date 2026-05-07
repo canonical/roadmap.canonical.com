@@ -24,7 +24,7 @@ If the Jira workflow status is **Done**, it overrides any `roadmap_state` value:
 | Added | Done | 🟦 Blue + "C" label |
 | *(any other)* | Done | 🟢 Green + "C" label |
 
-This ensures completed items are always clearly marked, even if a product manager previously set them as At Risk, Excluded, or Dropped.
+This ensures completed items are always clearly marked, even if a product manager previously set them as At Risk, Missed, or Dropped.
 
 ### 2. `Dropped` roadmap_state
 
@@ -32,7 +32,7 @@ This ensures completed items are always clearly marked, even if a product manage
 
 ### 3. Jira status `Rejected`
 
-If the Jira workflow status is **Rejected**, it overrides the remaining `roadmap_state` values (At Risk, Excluded, Added) and produces 🟥 Red.
+If the Jira workflow status is **Rejected**, it overrides the remaining `roadmap_state` values (At Risk, Missed, Added) and produces 🟥 Red.
 
 ### 4. Custom field `roadmap_state`
 
@@ -41,7 +41,7 @@ The Jira custom field `customfield_10968` (called "roadmap_state") provides expl
 | roadmap_state value | Colour |
 |---------------------|--------|
 | At Risk | 🟧 Orange |
-| Excluded | 🟥 Red |
+| Missed | 🟥 Red |
 | Added | 🟦 Blue |
 
 The field value may contain decorative emoji (🟧, 🟥, etc.) which are stripped before matching.
