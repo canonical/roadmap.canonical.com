@@ -26,6 +26,58 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# T-shirt size mapping
+# ---------------------------------------------------------------------------
+
+TSHIRT_MAP = {
+    "XXS": 5,
+    "XS": 10,
+    "S": 15,
+    "M": 25,
+    "L": 40,
+    "XL": 65,
+    "XXL": 105,
+    "XXXL": 170,
+}
+
+
+def map_tshirt_to_days(size_str: str | None) -> int | None:
+    """Map a T-shirt size string to ideal days.
+
+    Returns ``None`` for unknown or missing values.
+    """
+    if not size_str:
+        return None
+    return TSHIRT_MAP.get(size_str.upper().strip())
+
+
+# ---------------------------------------------------------------------------
+# T-shirt size mapping
+# ---------------------------------------------------------------------------
+
+TSHIRT_MAP = {
+    "XXS": 5,
+    "XS": 10,
+    "S": 15,
+    "M": 25,
+    "L": 40,
+    "XL": 65,
+    "XXL": 105,
+    "XXXL": 170,
+}
+
+
+def map_tshirt_to_days(size_str: str | None) -> int | None:
+    """Map a T-shirt size string to ideal days.
+
+    Returns ``None`` for unknown or missing values.
+    """
+    if not size_str:
+        return None
+    return TSHIRT_MAP.get(size_str.upper().strip())
+
+
+# ---------------------------------------------------------------------------
 # Phase 1 — pull from Jira
 # ---------------------------------------------------------------------------
 
@@ -79,7 +131,13 @@ def sync_jira_data() -> int:
     jira = JIRA(server=settings.jira_url, basic_auth=(settings.jira_username, settings.jira_pat))
     jql = _build_jql()
     logger.info("Running JQL: %s", jql)
-    issues = jira.search_issues(jql, maxResults=False)
+
+    # Explicitly request the fields we need (plus custom fields for capacity planning)
+    fields_to_fetch = "summary,description,status,labels,components,customfield_10001,fixVersions,parent,customfield_10019,assignee,priority"
+    if settings.jira_tshirt_field:
+        fields_to_fetch += f",{settings.jira_tshirt_field}"
+
+    issues = jira.search_issues(jql, maxResults=False, fields=fields_to_fetch)
     logger.info("Fetched %d issues from Jira", len(issues))
 
     if not issues:
@@ -171,8 +229,11 @@ def sync_jira_data() -> int:
                     )
                 else:
                     stale_list = sorted(stale_keys)
-                    logger.info("Removing %d stale issues no longer matching JQL: %s", len(stale_list), stale_list)
-                    cur.execute("DELETE FROM roadmap_item WHERE jira_key = ANY(%s)", (stale_list,))
+                    logger.info("Soft-deleting %d stale issues no longer matching JQL: %s", len(stale_list), stale_list)
+                    cur.execute(
+                        "UPDATE roadmap_item SET is_deleted = TRUE WHERE jira_key = ANY(%s)",
+                        (stale_list,),
+                    )
                     cur.execute("DELETE FROM jira_issue_raw WHERE jira_key = ANY(%s)", (stale_list,))
 
         conn.commit()
@@ -341,12 +402,47 @@ def process_raw_jira_data() -> int:
                 # Parent rank — injected by Phase 1 into _roadmap_meta
                 parent_rank = (raw_data.get("_roadmap_meta") or {}).get("parent_rank", "")
 
+                # Extract assignee (epic owner)
+                assignee = fields.get("assignee") or {}
+                assignee_name = assignee.get("displayName") if isinstance(assignee, dict) else None
+
+                # Extract priority
+                priority_field = fields.get("priority") or {}
+                priority = priority_field.get("name") if isinstance(priority_field, dict) else None
+
+                # Extract T-shirt size from configured custom field
+                t_shirt_size = None
+                if settings.jira_tshirt_field:
+                    raw_size = fields.get(settings.jira_tshirt_field)
+                    if isinstance(raw_size, dict):
+                        t_shirt_size = raw_size.get("value") or raw_size.get("name")
+                    elif isinstance(raw_size, str):
+                        t_shirt_size = raw_size
+
+                # Extract assignee (epic owner)
+                assignee = fields.get("assignee") or {}
+                assignee_name = assignee.get("displayName") if isinstance(assignee, dict) else None
+
+                # Extract priority
+                priority_field = fields.get("priority") or {}
+                priority = priority_field.get("name") if isinstance(priority_field, dict) else None
+
+                # Extract T-shirt size from configured custom field
+                t_shirt_size = None
+                if settings.jira_tshirt_field:
+                    raw_size = fields.get(settings.jira_tshirt_field)
+                    if isinstance(raw_size, dict):
+                        t_shirt_size = raw_size.get("value") or raw_size.get("name")
+                    elif isinstance(raw_size, str):
+                        t_shirt_size = raw_size
+
                 cur.execute(
                     """
                     INSERT INTO roadmap_item
                         (jira_key, title, description, status, release, tags, product_id,
-                         color_status, url, parent_key, parent_summary, rank, parent_rank)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                         color_status, url, parent_key, parent_summary, rank, parent_rank,
+                         assignee_name, priority, t_shirt_size, is_deleted)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE)
                     ON CONFLICT (jira_key) DO UPDATE SET
                         title           = EXCLUDED.title,
                         description     = EXCLUDED.description,
@@ -360,7 +456,12 @@ def process_raw_jira_data() -> int:
                         parent_summary  = EXCLUDED.parent_summary,
                         rank            = EXCLUDED.rank,
                         parent_rank     = EXCLUDED.parent_rank,
-                        updated_at      = now();
+                        assignee_name   = EXCLUDED.assignee_name,
+                        priority        = EXCLUDED.priority,
+                        t_shirt_size    = EXCLUDED.t_shirt_size,
+                        is_deleted      = FALSE,
+                        updated_at      = now()
+                    RETURNING id
                     """,
                     (
                         jira_key,
@@ -376,8 +477,42 @@ def process_raw_jira_data() -> int:
                         parent_summary,
                         rank,
                         parent_rank,
+                        assignee_name,
+                        priority,
+                        t_shirt_size,
                     ),
                 )
+                item_id = cur.fetchone()[0]
+
+                # Auto-create default role estimate for newly inserted epics
+                # (ON CONFLICT → existing row, no new id returned. ON CONFLICT DO
+                # UPDATE also returns id, but we only want to seed for brand-new rows.)
+                # We detect "new" by checking if this was an INSERT via the xmin system column
+                # or by simply checking if any estimates already exist.
+                cur.execute(
+                    "SELECT 1 FROM epic_role_estimate WHERE roadmap_item_id = %s LIMIT 1",
+                    (item_id,),
+                )
+                has_estimate = cur.fetchone()
+                if not has_estimate and t_shirt_size and settings.jira_tshirt_field:
+                    mapped_days = map_tshirt_to_days(t_shirt_size)
+                    if mapped_days is not None:
+                        # Find the default role for this product
+                        cur.execute(
+                            "SELECT id FROM product_role WHERE product_id = %s AND is_default = TRUE LIMIT 1",
+                            (product_id,),
+                        )
+                        default_role = cur.fetchone()
+                        if default_role:
+                            cur.execute(
+                                """
+                                INSERT INTO epic_role_estimate
+                                    (roadmap_item_id, role_id, size_days, initial_size_days)
+                                VALUES (%s, %s, %s, %s)
+                                """,
+                                (item_id, default_role[0], mapped_days, mapped_days),
+                            )
+                            logger.info("Auto-seeded role estimate for %s: %s = %d days", jira_key, t_shirt_size, mapped_days)
 
             # mark as processed
             processed_keys = [row[0] for row in raw_issues]
@@ -446,6 +581,7 @@ def take_daily_snapshot(snapshot_date: date | None = None) -> int:
                     r.parent_summary
                 FROM roadmap_item r
                 LEFT JOIN product p ON p.id = r.product_id
+                WHERE r.is_deleted = FALSE
                 """,
                 (snapshot_date,),
             )
@@ -523,6 +659,7 @@ def freeze_cycle(cycle: str, frozen_by: str | None = None, note: str | None = No
                 FROM roadmap_item r
                 LEFT JOIN product p ON p.id = r.product_id
                 WHERE %s = ANY(r.tags)
+                  AND r.is_deleted = FALSE
                 """,
                 (cycle, cycle),
             )
