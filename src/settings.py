@@ -67,6 +67,18 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("session_secret", "APP_SESSION_SECRET"),
     )
 
+    # Jira custom field ID for T-Shirt Size (e.g. "customfield_10042")
+    jira_tshirt_field: str = Field(
+        default="",
+        validation_alias=AliasChoices("jira_tshirt_field", "APP_JIRA_TSHIRT_FIELD"),
+    )
+
+    # Jira custom field ID for T-Shirt Size (e.g. "customfield_10042")
+    jira_tshirt_field: str = Field(
+        default="",
+        validation_alias=AliasChoices("jira_tshirt_field", "APP_JIRA_TSHIRT_FIELD"),
+    )
+
     # ── Periodic sync ────────────────────────────────────────────
     # Interval (in seconds) between automatic Jira syncs.
     # Set to 0 to disable the periodic sync entirely.

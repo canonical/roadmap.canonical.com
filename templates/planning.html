@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Capacity Planning — {{ product_name }}</title>
+  <link rel="stylesheet" href="https://assets.ubuntu.com/v1/vanilla-framework-version-4.21.0.min.css" />
+  <script src="https://unpkg.com/htmx.org@1.9.12" integrity="sha384-ujb1lZYygJmzgSwoxRggbCHcjc0rB2XoQrxeTUQyRjrOnlCoYta87iKBWq3EsdM2" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    .planning-page { padding: 1rem; max-width: 1400px; margin: 0 auto; }
+    .planning-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 1rem; }
+    .planning-header h1 { margin: 0; }
+    .config-panel { background: #f7f7f7; padding: 1rem; border-radius: 4px; margin-bottom: 1rem; }
+    .config-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
+    .availability-grid { display: grid; grid-template-columns: auto auto auto repeat(auto-fit, minmax(3rem, 1fr)); gap: .25rem; align-items: center; }
+    .availability-grid input { width: 3rem; text-align: center; }
+    .epics-table { width: 100%; border-collapse: collapse; font-size: .875rem; }
+    .epics-table th, .epics-table td { padding: .4rem; border-bottom: 1px solid #d9d9d9; text-align: left; vertical-align: middle; }
+    .epics-table th { background: #f7f7f7; position: sticky; top: 0; z-index: 2; font-size: .8rem; }
+    .epics-table input[type="number"] { width: 3.5rem; font-size: .8rem; }
+    .epics-table .blue-row { background-color: #e6f2ff; }
+    .epics-table .dropped-row { text-decoration: line-through; opacity: .5; background-color: #fce4e4; }
+    .summary-badge { display: inline-block; padding: .25rem .5rem; border-radius: 4px; font-weight: 600; font-size: .875rem; }
+    .badge-green { background: #0e8420; color: #fff; }
+    .badge-red { background: #c7162b; color: #fff; }
+    .badge-orange { background: #ff9900; color: #fff; }
+    .chart-container { width: 100%; height: 280px; position: relative; }
+    .toast { position: fixed; bottom: 1rem; right: 1rem; padding: .5rem 1rem; background: #111; color: #fff; border-radius: 4px; opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 999; }
+    .toast.show { opacity: 1; }
+    .role-chip { display: inline-block; padding: .1rem .4rem; border-radius: 4px; background: #e6e6e6; font-size: .75rem; margin-right: .25rem; }
+    .overcommitted { color: #c7162b; font-weight: 600; }
+    .ok { color: #0e8420; font-weight: 600; }
+    .member-row { display: flex; gap: .5rem; align-items: center; margin-bottom: .25rem; }
+    .member-row input, .member-row select { font-size: .875rem; }
+    .role-row { display: flex; gap: .5rem; align-items: center; margin-bottom: .25rem; }
+    .small-input { width: 4rem; }
+    .action-link { color: #06c; cursor: pointer; font-size: .8rem; margin-left: .5rem; }
+    .action-link:hover { text-decoration: underline; }
+    .progress-table { width: 100%; border-collapse: collapse; font-size: .8rem; }
+    .progress-table th, .progress-table td { padding: .3rem; border-bottom: 1px solid #d9d9d9; }
+    .progress-table th { background: #f7f7f7; position: sticky; top: 0; }
+    .progress-table input { width: 3rem; font-size: .8rem; text-align: center; }
+    .auto-banner { background: #fff7e6; border-left: 4px solid #ff9900; padding: .75rem 1rem; margin-bottom: 1rem; border-radius: 4px; }
+  </style>
+</head>
+<body>
+<div class="planning-page">
+  <div class="planning-header">
+    <div>
+      <h1>Capacity Planning</h1>
+      <p class="p-text--small">{{ product_name }} — Department: {{ department }}</p>
+    </div>
+    <div>
+      <label for="cycle-select">Cycle:</label>
+      <select id="cycle-select" onchange="changeCycle(this.value)">
+        {% for c in cycles %}
+        <option value="{{ c.cycle }}" {% if c.cycle == selected_cycle %}selected{% endif %}>
+          {{ c.cycle }} ({{ c.start_date }} — {{ c.end_date }})
+        </option>
+        {% endfor %}
+      </select>
+      <div id="summary-content" style="margin-top: .5rem;">Loading summary…</div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col-8">
+      <!-- Configuration -->
+      <div class="config-panel" id="config-panel">
+        <h3>Configuration</h3>
+        <div id="config-content"></div>
+      </div>
+
+      <!-- Roles -->
+      <div class="config-panel" id="roles-panel">
+        <h3>Roles <span class="p-text--small">(max 4)</span></h3>
+        <div id="roles-content"></div>
+      </div>
+
+      <!-- Team Members -->
+      <div class="config-panel" id="members-panel">
+        <h3>Team Members</h3>
+        <div id="members-content"></div>
+      </div>
+
+      <!-- Availability Grid -->
+      <div class="config-panel" id="availability-panel">
+        <h3>Weekly Availability <span class="p-text--small">(0–5 days per week)</span></h3>
+        <div id="availability-content"></div>
+      </div>
+
+      <!-- Epic Selection -->
+      <div class="config-panel" id="epics-panel">
+        <h3>Epic Planning</h3>
+        <div id="epics-content">Loading epics…</div>
+      </div>
+
+      <!-- Progress Table -->
+      <div class="config-panel" id="progress-panel">
+        <h3>Mid-Cycle Progress <span class="p-text--small">(remaining ideal days)</span></h3>
+        <div id="progress-content"></div>
+      </div>
+    </div>
+
+    <div class="col-4">
+      <div class="config-panel" style="position: sticky; top: 1rem;">
+        <h3>Burn-Down Chart</h3>
+        <div class="chart-container">
+          <canvas id="burnDownChart"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast">Saved</div>
+
+<script>
+var productId = {{ product_id }};
+var currentCycle = '{{ selected_cycle }}';
+
+(function() {
+  var chart = null;
+
+  function showToast(msg) {
+    var t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(function() { t.classList.remove('show'); }, 1500);
+  }
+
+  window.changeCycle = function(cycle) {
+    window.location.href = '/products/' + productId + '/planning?cycle=' + cycle;
+  };
+
+  window.loadFragment = function(url, targetId) {
+    fetch(url, { headers: { 'HX-Request': 'true' } })
+      .then(function(r) { return r.text(); })
+      .then(function(html) {
+        var container = document.getElementById(targetId);
+        if (!container) return;
+        container.innerHTML = html;
+        // Extract and execute inline scripts (htmx/innerHTML strips them)
+        container.querySelectorAll('script').forEach(function(oldScript) {
+          var newScript = document.createElement('script');
+          if (oldScript.src) {
+            newScript.src = oldScript.src;
+            newScript.async = false;
+          } else {
+            newScript.textContent = oldScript.textContent;
+          }
+          oldScript.parentNode.replaceChild(newScript, oldScript);
+        });
+      });
+  }
+
+  function loadConfigPanels() {
+    loadFragment('/api/v1/products/' + productId + '/planning-config', 'config-content');
+    loadFragment('/api/v1/products/' + productId + '/roles', 'roles-content');
+    loadFragment('/api/v1/products/' + productId + '/members', 'members-content');
+    loadFragment('/api/v1/products/' + productId + '/availability?cycle=' + currentCycle, 'availability-content');
+  }
+
+  function refreshData() {
+    fetch('/api/v1/products/' + productId + '/curves?cycle=' + currentCycle)
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        updateChart(data);
+        updateEpicsTable(data);
+        updateSummary(data);
+        updateProgressTable(data);
+      })
+      .catch(function(e) { console.error('refreshData failed:', e); });
+  }
+
+  function updateChart(data) {
+    var ctx = document.getElementById('burnDownChart');
+    if (!ctx) return;
+    var weeks = data.weeks || [];
+    var globalData = data.global || {};
+
+    var datasets = [
+      { label: 'Ideal', data: globalData.ideal || [], borderColor: '#666', borderDash: [5, 5], fill: false, tension: 0, pointRadius: 2 },
+      { label: 'Initial', data: globalData.initial || [], borderColor: '#06c', fill: false, tension: 0, pointRadius: 2 },
+      { label: 'Expected', data: globalData.expected || [], borderColor: '#c7162b', fill: false, tension: 0, pointRadius: 3 },
+    ];
+
+    if (chart) {
+      chart.data.labels = weeks;
+      chart.data.datasets = datasets;
+      chart.update();
+    } else {
+      chart = new Chart(ctx, {
+        type: 'line',
+        data: { labels: weeks, datasets: datasets },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          scales: {
+            y: { beginAtZero: true, title: { display: true, text: 'Remaining ideal days' } },
+            x: { title: { display: true, text: 'Week' }, ticks: { maxRotation: 45, minRotation: 45 } },
+          },
+          plugins: {
+            legend: { position: 'top' },
+            tooltip: {
+              callbacks: { title: function(context) { return 'Week starting ' + context[0].label; } },
+            },
+          },
+        },
+      });
+    }
+  }
+
+  function updateEpicsTable(data) {
+    var container = document.getElementById('epics-content');
+    if (!container || !data.epics) return;
+    var html = '<table class="epics-table"><thead><tr>' +
+      '<th>Key</th><th>Title</th><th>Owner</th><th>Priority</th><th>T-Shirt</th>';
+    var roleNames = Object.keys(data.roles || {});
+    roleNames.forEach(function(r) { html += '<th>' + r + '</th>'; });
+    html += '<th>In</th><th>Drop</th></tr></thead><tbody>';
+
+    data.epics.forEach(function(epic) {
+      var isBlue = epic.estimates.some(function(e) { return e.initial_size_days === 0 && e.size_days > 0; });
+      var cls = isBlue ? 'blue-row' : '';
+      if (epic.dropped) cls = 'dropped-row';
+      html += '<tr class="' + cls + '">';
+      html += '<td><a href="/browse/' + epic.jira_key + '" target="_blank">' + epic.jira_key + '</a></td>';
+      html += '<td>' + epic.title + '</td>';
+      html += '<td>' + (epic.assignee_name || '—') + '</td>';
+      html += '<td>' + (epic.priority || '—') + '</td>';
+      html += '<td>' + (epic.t_shirt_size || '?') + '</td>';
+      roleNames.forEach(function(rname) {
+        var est = epic.estimates.find(function(e) { return e.role_name === rname; });
+        var val = est ? est.size_days : 0;
+        var rid = est ? est.role_id : 0;
+        html += '<td><input type="number" min="0" value="' + val + '" data-epic="' + epic.id + '" data-role="' + rid + '" class="epic-size-input"></td>';
+      });
+      html += '<td><input type="checkbox" ' + (epic.in_roadmap ? 'checked' : '') + ' data-epic="' + epic.id + '" class="epic-in-input"></td>';
+      html += '<td><input type="checkbox" ' + (epic.dropped ? 'checked' : '') + ' data-epic="' + epic.id + '" class="epic-drop-input"></td>';
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+
+    // Role summaries
+    html += '<div style="margin-top:1rem;">';
+    var roles = data.roles || {};
+    roleNames.forEach(function(rname) {
+      var roleData = roles[rname] || {};
+      var cap = roleData.capacity || 0;
+      var comm = roleData.committed || 0;
+      var diff = comm - cap;
+      var cls = diff > 0 ? 'overcommitted' : 'ok';
+      html += '<div><span class="role-chip">' + rname + '</span> ' +
+        'Committed: ' + comm + ' | Capacity: ' + cap + ' | ' +
+        '<span class="' + cls + '">' + (diff > 0 ? 'OVER BY ' + diff : 'OK') + '</span></div>';
+    });
+    html += '</div>';
+
+    container.innerHTML = html;
+
+    // Attach listeners
+    container.querySelectorAll('.epic-size-input').forEach(function(inp) {
+      inp.addEventListener('change', function() {
+        var epicId = parseInt(this.dataset.epic);
+        var roleId = parseInt(this.dataset.role);
+        var size = parseInt(this.value) || 0;
+        var payload = { estimates: [{ role_id: roleId, size_days: size, initial_size_days: size }] };
+        fetch('/api/v1/epics/' + epicId + '/estimates', {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        }).then(function() { refreshData(); showToast('Saved'); });
+      });
+    });
+
+    container.querySelectorAll('.epic-in-input').forEach(function(inp) {
+      inp.addEventListener('change', function() {
+        var epicId = parseInt(this.dataset.epic);
+        var payload = { cycle: currentCycle, is_in_roadmap: this.checked, is_dropped: false };
+        fetch('/api/v1/epics/' + epicId + '/selection', {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        }).then(function() { refreshData(); showToast('Saved'); });
+      });
+    });
+
+    container.querySelectorAll('.epic-drop-input').forEach(function(inp) {
+      inp.addEventListener('change', function() {
+        var epicId = parseInt(this.dataset.epic);
+        var payload = { cycle: currentCycle, is_in_roadmap: true, is_dropped: this.checked };
+        fetch('/api/v1/epics/' + epicId + '/selection', {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        }).then(function() { refreshData(); showToast('Saved'); });
+      });
+    });
+  }
+
+  function updateSummary(data) {
+    var container = document.getElementById('summary-content');
+    if (!container || !data.summary) return;
+    var s = data.summary;
+    var badgeCls = s.is_viable ? 'badge-green' : 'badge-red';
+    var html = '<span class="summary-badge ' + badgeCls + '">' +
+      (s.is_viable ? 'FITS CAPACITY' : 'OVER BY ' + Math.round(s.stretch_pct * 100) + '%') +
+      '</span><br><span class="p-text--small">Committed: ' + s.total_committed + ' | Capacity: ' + s.total_capacity + '</span>';
+    container.innerHTML = html;
+  }
+
+  function updateProgressTable(data) {
+    var container = document.getElementById('progress-content');
+    if (!container || !data.epics || data.weeks.length === 0) return;
+    var html = '<table class="progress-table"><thead><tr><th>Epic</th><th>Initial</th>';
+    data.weeks.forEach(function(w) { html += '<th>' + w + '</th>'; });
+    html += '</tr></thead><tbody>';
+    data.epics.forEach(function(epic) {
+      if (!epic.in_roadmap || epic.dropped) return;
+      var totalInit = epic.estimates.reduce(function(s, e) { return s + e.initial_size_days; }, 0);
+      html += '<tr><td>' + epic.jira_key + '</td><td>' + totalInit + '</td>';
+      data.weeks.forEach(function(w) {
+        html += '<td><input type="number" min="0" placeholder="-" data-epic="' + epic.id + '" data-week="' + w + '" class="progress-input"></td>';
+      });
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+    container.innerHTML = html;
+
+    // Load saved progress values
+    container.querySelectorAll('.progress-input').forEach(function(inp) {
+      var epicId = inp.dataset.epic;
+      var week = inp.dataset.week;
+      fetch('/api/v1/epics/' + epicId + '/progress?cycle=' + currentCycle)
+        .then(function(r) { return r.json(); })
+        .then(function(pdata) {
+          var val = pdata.entries ? pdata.entries[week] : null;
+          if (val !== undefined && val !== null) inp.value = val;
+        });
+
+      inp.addEventListener('change', function() {
+        var val = parseInt(this.value);
+        if (isNaN(val)) val = null;
+        fetch('/api/v1/epics/' + this.dataset.epic + '/progress', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cycle: currentCycle, week_start_date: this.dataset.week, remaining_days: val }),
+        }).then(function() { refreshData(); showToast('Saved'); });
+      });
+    });
+  }
+
+  document.addEventListener('DOMContentLoaded', function() {
+    loadConfigPanels();
+    refreshData();
+  });
+
+  document.addEventListener('keydown', function(e) {
+    if (e.ctrlKey && e.key === 'z') {
+      e.preventDefault();
+      fetch('/api/v1/products/' + productId + '/undo', { method: 'POST' })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          showToast(d.data && d.data.undone ? 'Undone' : 'Nothing to undo');
+          refreshData();
+        })
+        .catch(function() { showToast('Undo failed'); });
+    }
+  });
+})();
+</script>
+</body>
+</html>

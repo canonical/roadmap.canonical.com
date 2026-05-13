@@ -87,6 +87,13 @@
     </span>
   </div>
 
+  {% if selected_product_id %}
+  <div class="sidebar-section-title">Planning</div>
+  <div style="padding: 0 1rem;">
+    <a href="/products/{{ selected_product_id }}/planning" class="p-button--positive p-button--small" style="width: 100%;">Capacity Planning</a>
+  </div>
+  {% endif %}
+
 </aside>
 {% endblock %}
 
