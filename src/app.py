@@ -249,7 +249,9 @@ async def token_page(request: Request):
 <div style="display:flex;gap:.5rem;align-items:center;">
 <input id="cookie-val" type="text" class="p-form-validation__input" readonly
        value="roadmap_session={cookie_value}" style="font-family:monospace;flex:1;">
-<button class="p-button--positive" onclick="navigator.clipboard.writeText(document.getElementById('cookie-val').value)">Copy</button>
+    <button class="p-button--positive" 
+        onclick="navigator.clipboard.writeText(document.getElementById('cookie-val').value)">Copy
+    </button>
 </div>
 <p>This cookie expires in 24 hours (or when the server restarts).</p>
 <h2>Examples</h2>
