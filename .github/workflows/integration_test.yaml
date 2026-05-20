@@ -9,6 +9,10 @@ concurrency:
 
 jobs:
   integration-tests:
+    permissions:
+      packages: write
+      contents: read
+      
     uses: canonical/operator-workflows/.github/workflows/integration_test.yaml@main
     secrets: inherit
     with:
