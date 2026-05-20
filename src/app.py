@@ -245,7 +245,14 @@ async def token_page(request: Request):
 <div class="p-strip"><div class="row"><div class="col-12">
 <h1>API session cookie</h1>
 <p>You are authenticated. Use the cookie below to call API endpoints with <code>curl</code>:</p>
-<pre class="p-code-snippet"><code>curl -b 'roadmap_session={cookie_value}' {base_url}/api/v1/status</code></pre>
+<h2>Cookie value</h2>
+<div style="display:flex;gap:.5rem;align-items:center;">
+<input id="cookie-val" type="text" class="p-form-validation__input" readonly
+       value="roadmap_session={cookie_value}" style="font-family:monospace;flex:1;">
+    <button class="p-button--positive" 
+        onclick="navigator.clipboard.writeText(document.getElementById('cookie-val').value)">Copy
+    </button>
+</div>
 <p>This cookie expires in 24 hours (or when the server restarts).</p>
 <h2>Examples</h2>
 <pre class="p-code-snippet"><code># Trigger a Jira sync
