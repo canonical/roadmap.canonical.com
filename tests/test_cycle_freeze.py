@@ -153,9 +153,7 @@ def test_freeze_overrides_non_completed_colors():
     freeze_cycle("25.10")
 
     with get_db_connection() as conn, conn.cursor() as cur:
-        cur.execute(
-            "SELECT jira_key, color_status FROM cycle_freeze_item WHERE cycle = '25.10' ORDER BY jira_key"
-        )
+        cur.execute("SELECT jira_key, color_status FROM cycle_freeze_item WHERE cycle = '25.10' ORDER BY jira_key")
         rows = {r[0]: r[1] for r in cur.fetchall()}
 
     # Overridden to red
@@ -174,8 +172,13 @@ def test_freeze_preserves_carry_over_badge():
     """Carry-over badge is preserved even when health color is overridden."""
     pid = _insert_product("CarryOver")
     _insert_roadmap_item(
-        "CV-1", "Carry item", "Open", "orange", pid,
-        tags=["25.10"], carry_over={"color": "purple", "count": 2},
+        "CV-1",
+        "Carry item",
+        "Open",
+        "orange",
+        pid,
+        tags=["25.10"],
+        carry_over={"color": "purple", "count": 2},
     )
 
     freeze_cycle("25.10")
