@@ -45,9 +45,14 @@ def _insert_roadmap_item(
     tags: list[str] | None = None,
     parent_key: str | None = None,
     parent_summary: str | None = None,
+    label: str | None = None,
+    carry_over: dict | None = None,
 ) -> None:
     """Insert a roadmap_item row for testing."""
-    color_status = Jsonb({"health": {"color": color}, "carry_over": None})
+    health = {"color": color}
+    if label:
+        health["label"] = label
+    color_status = Jsonb({"health": health, "carry_over": carry_over})
     if product_id is None:
         product_id = _get_uncategorized_id()
     with get_db_connection() as conn, conn.cursor() as cur:
@@ -119,7 +124,7 @@ def test_freeze_captures_product_info():
 
 
 def test_freeze_captures_color_status():
-    """Frozen items preserve the color_status JSON from freeze time."""
+    """Frozen items override non-completed colors to red at freeze time."""
     pid = _insert_product("LXD")
     _insert_roadmap_item("FCS-1", "Colored item", "In Progress", "orange", pid, tags=["25.10"])
 
@@ -128,7 +133,60 @@ def test_freeze_captures_color_status():
     with get_db_connection() as conn, conn.cursor() as cur:
         cur.execute("SELECT color_status FROM cycle_freeze_item WHERE jira_key = 'FCS-1' AND cycle = '25.10'")
         cs = cur.fetchone()[0]
-    assert cs["health"]["color"] == "orange"
+    assert cs["health"]["color"] == "red"
+
+
+def test_freeze_overrides_non_completed_colors():
+    """Freezing overrides non-completed colors to red; keeps completed/red/black."""
+    pid = _insert_product("ColorTest")
+    # Items that should be overridden to red
+    _insert_roadmap_item("CO-1", "In progress", "In Progress", "green", pid, tags=["25.10"])
+    _insert_roadmap_item("CO-2", "At risk", "Open", "orange", pid, tags=["25.10"])
+    _insert_roadmap_item("CO-3", "Not started", "Open", "white", pid, tags=["25.10"])
+    _insert_roadmap_item("CO-4", "Added no done", "Open", "blue", pid, tags=["25.10"])
+    # Items that should keep their color
+    _insert_roadmap_item("CO-5", "Done green", "Done", "green", pid, tags=["25.10"], label="C")
+    _insert_roadmap_item("CO-6", "Done blue", "Done", "blue", pid, tags=["25.10"], label="C")
+    _insert_roadmap_item("CO-7", "Rejected", "Rejected", "red", pid, tags=["25.10"])
+    _insert_roadmap_item("CO-8", "Dropped", "Open", "black", pid, tags=["25.10"])
+
+    freeze_cycle("25.10")
+
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT jira_key, color_status FROM cycle_freeze_item WHERE cycle = '25.10' ORDER BY jira_key"
+        )
+        rows = {r[0]: r[1] for r in cur.fetchall()}
+
+    # Overridden to red
+    assert rows["CO-1"]["health"]["color"] == "red"
+    assert rows["CO-2"]["health"]["color"] == "red"
+    assert rows["CO-3"]["health"]["color"] == "red"
+    assert rows["CO-4"]["health"]["color"] == "red"
+    # Preserved
+    assert rows["CO-5"]["health"] == {"color": "green", "label": "C"}
+    assert rows["CO-6"]["health"] == {"color": "blue", "label": "C"}
+    assert rows["CO-7"]["health"]["color"] == "red"
+    assert rows["CO-8"]["health"]["color"] == "black"
+
+
+def test_freeze_preserves_carry_over_badge():
+    """Carry-over badge is preserved even when health color is overridden."""
+    pid = _insert_product("CarryOver")
+    _insert_roadmap_item(
+        "CV-1", "Carry item", "Open", "orange", pid,
+        tags=["25.10"], carry_over={"color": "purple", "count": 2},
+    )
+
+    freeze_cycle("25.10")
+
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT color_status FROM cycle_freeze_item WHERE jira_key = 'CV-1' AND cycle = '25.10'")
+        cs = cur.fetchone()[0]
+    # Color overridden to red
+    assert cs["health"]["color"] == "red"
+    # Carry-over badge preserved
+    assert cs["carry_over"] == {"color": "purple", "count": 2}
 
 
 def test_freeze_captures_objective():
