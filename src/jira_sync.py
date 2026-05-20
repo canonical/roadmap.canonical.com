@@ -498,7 +498,8 @@ def freeze_cycle(cycle: str, frozen_by: str | None = None, note: str | None = No
                 (cycle, frozen_by, note),
             )
 
-            # Snapshot every item that carries this cycle label
+            # Snapshot every item that carries this cycle label.
+            # Non-completed colours are overridden to red at freeze time.
             cur.execute(
                 """
                 INSERT INTO cycle_freeze_item
@@ -510,7 +511,18 @@ def freeze_cycle(cycle: str, frozen_by: str | None = None, note: str | None = No
                     r.jira_key,
                     r.title,
                     r.status,
-                    r.color_status,
+                    CASE
+                        WHEN r.color_status->'health'->>'color' IN ('red', 'black')
+                            THEN r.color_status
+                        WHEN r.color_status->'health'->>'color' IN ('green', 'blue')
+                             AND r.color_status->'health'->>'label' = 'C'
+                            THEN r.color_status
+                        ELSE jsonb_set(
+                            COALESCE(r.color_status, '{}'::jsonb),
+                            '{health}',
+                            '{"color": "red"}'::jsonb
+                        )
+                    END,
                     r.url,
                     r.product_id,
                     p.name,
@@ -760,7 +772,18 @@ def _ensure_freeze_snapshot(cur, cycle: str, frozen_by: str | None = None) -> in
             r.jira_key,
             r.title,
             r.status,
-            r.color_status,
+            CASE
+                WHEN r.color_status->'health'->>'color' IN ('red', 'black')
+                    THEN r.color_status
+                WHEN r.color_status->'health'->>'color' IN ('green', 'blue')
+                     AND r.color_status->'health'->>'label' = 'C'
+                    THEN r.color_status
+                ELSE jsonb_set(
+                    COALESCE(r.color_status, '{}'::jsonb),
+                    '{health}',
+                    '{"color": "red"}'::jsonb
+                )
+            END,
             r.url,
             r.product_id,
             p.name,

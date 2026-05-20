@@ -42,10 +42,23 @@ curl -X PUT http://localhost:8000/api/v1/cycles/27.04 \
 
 | Transition | Side effect |
 |------------|-------------|
-| Any → `frozen` | A snapshot is automatically created from the current `roadmap_item` data |
+| Any → `frozen` | A snapshot is automatically created from the current `roadmap_item` data. **Non-completed items have their colour overridden to red** (see below). |
 | `frozen` → any | The snapshot is automatically deleted |
 | Any → `current` | Validated that no other cycle is already `current` |
 | Any → `future` | No special side effects |
+
+### Colour override at freeze
+
+When a cycle is frozen, only final-outcome colours are permitted in the snapshot:
+
+| Colour kept as-is | Meaning |
+|--------------------|---------|
+| Green + "C" | Completed |
+| Blue + "C" | Completed (Added) |
+| Red | Rejected / Missed |
+| Black | Dropped |
+
+All other colours (orange/at-risk, white/not-started, green without "C", etc.) are **automatically overridden to red**, indicating the item was not completed by the end of the cycle. The carry-over badge is preserved.
 
 ## Typical lifecycle workflow
 
