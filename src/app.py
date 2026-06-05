@@ -105,8 +105,8 @@ class OIDCAuthMiddleware(BaseHTTPMiddleware):
     """
 
     async def dispatch(self, request: Request, call_next):
-        if settings.oidc_client_id and request.url.path not in _PUBLIC_PATHS and not is_authenticated(request):
-            if request.url.path.startswith("/api/"):
+        if settings.oidc_client_id and request.scope["path"] not in _PUBLIC_PATHS and not is_authenticated(request):
+            if request.scope["path"].startswith("/api/"):
                 return JSONResponse(
                     status_code=401,
                     content={"detail": "Authentication required"},
