@@ -97,7 +97,7 @@ def test_oidc_middleware_ignores_forged_host_for_path_checks(client, monkeypatch
     forged_host_headers = {"host": "attacker.invalid/api/v1"}
 
     public_resp = client.get("/login", headers=forged_host_headers, follow_redirects=False)
-    assert public_resp.status_code in (302, 307)
+    assert public_resp.status_code == 307
     assert public_resp.headers["location"] == "/oidc-provider-login"
 
     api_resp = client.get("/api/v1/status", headers=forged_host_headers, follow_redirects=False)
@@ -105,7 +105,7 @@ def test_oidc_middleware_ignores_forged_host_for_path_checks(client, monkeypatch
     assert api_resp.json() == {"detail": "Authentication required"}
 
     page_resp = client.get("/", headers=forged_host_headers, follow_redirects=False)
-    assert page_resp.status_code in (302, 307)
+    assert page_resp.status_code == 307
     assert page_resp.headers["location"] == "/login"
 
 
