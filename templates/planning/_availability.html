@@ -1,0 +1,35 @@
+<div>
+  <div class="availability-grid">
+    <div><strong>Member</strong></div>
+    <div><strong>Role</strong></div>
+    <div><strong>Total</strong></div>
+    {% for w in weeks %}
+    <div style="text-align: center; font-size: .7rem;">{{ w | string | truncate(10, True, "") }}</div>
+    {% endfor %}
+
+    {% for m in members %}
+    <div>{{ m.name }}</div>
+    <div class="p-text--small">{{ m.role_name or '—' }}</div>
+    <div id="member-total-{{ m.id }}">{{ member_totals[m.id] }}</div>
+    {% for w in weeks %}
+    <div>
+      <input type="number" min="0" max="5" value="{{ grid.get(m.id, {}).get(w, 5) }}"
+             onchange="setAvail({{ m.id }}, '{{ w }}', this.value)">
+    </div>
+    {% endfor %}
+    {% endfor %}
+  </div>
+</div>
+<script>
+(function() {
+  var productId = {{ product_id }};
+  window.setAvail = function(memberId, week, days) {
+    fetch('/api/v1/products/' + productId + '/availability/' + memberId + '/' + week + '?days_available=' + days, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+    }).then(function() {
+      // availability saved silently
+    });
+  };
+})();
+</script>

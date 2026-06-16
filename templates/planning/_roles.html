@@ -1,0 +1,57 @@
+<div>
+  {% for role in roles %}
+  <div class="role-row" id="role-{{ role.id }}">
+    <span class="role-chip">{{ role.name }}</span>
+    {% if role.is_default %}<span class="p-text--small">(default)</span>{% endif %}
+    <span class="action-link" onclick="deleteRole({{ role.id }})">delete</span>
+  </div>
+  {% endfor %}
+  {% if roles|length < 4 %}
+  <form class="role-row" id="add-role-form" onsubmit="event.preventDefault(); addRole(this);">
+    <input type="text" name="name" placeholder="New role name" required style="width: 8rem;">
+    <label><input type="checkbox" name="is_default" value="true"> default</label>
+    <button type="submit" class="p-button--positive p-button--small">Add</button>
+  </form>
+  {% endif %}
+</div>
+<script>
+(function() {
+  var productId = {{ product_id }};
+  window.addRole = function(form) {
+    var data = {
+      name: form.querySelector('[name="name"]').value,
+      sort_order: 0,
+      is_default: form.querySelector('[name="is_default"]').checked
+    };
+    fetch('/api/v1/products/' + productId + '/roles', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    }).then(function() {
+      loadFragment('/api/v1/products/' + productId + '/roles', 'roles-content');
+      loadFragment('/api/v1/products/' + productId + '/members', 'members-content');
+    });
+  };
+  window.deleteRole = function(roleId) {
+    if (!confirm('Delete this role?')) return;
+    fetch('/api/v1/products/' + productId + '/roles/' + roleId, { method: 'DELETE' })
+      .then(function() {
+        loadFragment('/api/v1/products/' + productId + '/roles', 'roles-content');
+        loadFragment('/api/v1/products/' + productId + '/members', 'members-content');
+      });
+  };
+    fetch('/api/v1/products/' + productId + '/roles', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    }).then(function() {
+      loadFragment('/api/v1/products/' + productId + '/roles', 'roles-content');
+    });
+  };
+  window.deleteRole = function(roleId) {
+    if (!confirm('Delete this role?')) return;
+    fetch('/api/v1/products/' + productId + '/roles/' + roleId, { method: 'DELETE' })
+      .then(function() { loadFragment('/api/v1/products/' + productId + '/roles', 'roles-content'); });
+  };
+})();
+</script>
