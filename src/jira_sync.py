@@ -154,9 +154,24 @@ def sync_jira_data() -> int:
             # issues), skip the deletion to avoid nuking the database.
             cur.execute("SELECT jira_key FROM jira_issue_raw")
             existing_keys = {row[0] for row in cur.fetchall()}
-            stale_keys = existing_keys - fetched_keys
+
+            # Issues belonging to frozen cycles are intentionally excluded from the
+            # JQL (``_build_jql`` only queries 'current'/'future' cycles), so they are
+            # never in ``fetched_keys``. They must be preserved — their immutable
+            # snapshot lives in ``cycle_freeze_item`` and they are restored on unfreeze.
+            # Exclude them from stale-removal so they neither get deleted nor inflate
+            # the safety-threshold percentage.
+            cur.execute("SELECT cycle FROM cycle_config WHERE state = 'frozen'")
+            frozen_cycles = [row[0] for row in cur.fetchall()]
+            frozen_keys: set[str] = set()
+            if frozen_cycles:
+                cur.execute("SELECT jira_key FROM roadmap_item WHERE tags && %s::text[]", (frozen_cycles,))
+                frozen_keys = {row[0] for row in cur.fetchall()}
+
+            candidate_keys = existing_keys - frozen_keys
+            stale_keys = candidate_keys - fetched_keys
             if stale_keys:
-                stale_pct = len(stale_keys) / len(existing_keys) * 100 if existing_keys else 0
+                stale_pct = len(stale_keys) / len(candidate_keys) * 100 if candidate_keys else 0
                 threshold = settings.stale_removal_threshold_pct
                 if stale_pct > threshold:
                     logger.error(
@@ -165,7 +180,7 @@ def sync_jira_data() -> int:
                         "This may indicate an expired API token or degraded Jira permissions. "
                         "Verify credentials and re-sync, or adjust STALE_REMOVAL_THRESHOLD_PCT.",
                         len(stale_keys),
-                        len(existing_keys),
+                        len(candidate_keys),
                         stale_pct,
                         threshold,
                     )
