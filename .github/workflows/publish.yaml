@@ -10,6 +10,7 @@ jobs:
     uses: canonical/operator-workflows/.github/workflows/publish_charm.yaml@main
     permissions:
       contents: write
+      packages: read
     with:
       resource-mapping: '{"roadmap-web-rock": "app-image"}'
     secrets: inherit
