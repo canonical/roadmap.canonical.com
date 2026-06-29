@@ -83,6 +83,32 @@ def test_status_endpoint(client):
     assert "state" in resp.json()
 
 
+def test_oidc_middleware_ignores_forged_host_for_path_checks(client, monkeypatch):
+    """A forged Host header must not affect public/API path classification."""
+    import src.app as app_mod
+
+    async def _fake_login_redirect(request):
+        return app_mod.RedirectResponse(url="/oidc-provider-login")
+
+    monkeypatch.setattr(app_mod.settings, "oidc_client_id", "test-client-id")
+    monkeypatch.setattr(app_mod, "is_authenticated", lambda request: False)
+    monkeypatch.setattr(app_mod, "login_redirect", _fake_login_redirect)
+
+    forged_host_headers = {"host": "attacker.invalid/api/v1"}
+
+    public_resp = client.get("/login", headers=forged_host_headers, follow_redirects=False)
+    assert public_resp.status_code == 307
+    assert public_resp.headers["location"] == "/oidc-provider-login"
+
+    api_resp = client.get("/api/v1/status", headers=forged_host_headers, follow_redirects=False)
+    assert api_resp.status_code == 401
+    assert api_resp.json() == {"detail": "Authentication required"}
+
+    page_resp = client.get("/", headers=forged_host_headers, follow_redirects=False)
+    assert page_resp.status_code == 307
+    assert page_resp.headers["location"] == "/login"
+
+
 # ---------------------------------------------------------------------------
 # Product CRUD tests
 # ---------------------------------------------------------------------------
