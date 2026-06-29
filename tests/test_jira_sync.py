@@ -671,3 +671,52 @@ def test_sync_threshold_allows_small_cleanup(monkeypatch):
         # BULK-2 through BULK-10 should still exist
         cur.execute("SELECT count(*) FROM jira_issue_raw WHERE jira_key LIKE 'BULK-%%'")
         assert cur.fetchone()[0] == 9
+
+
+def test_sync_preserves_frozen_cycle_issues(monkeypatch):
+    """Issues belonging to a frozen cycle are excluded from stale removal.
+
+    Once a cycle is frozen, ``_build_jql`` stops querying its label, so those
+    issues never appear in the fetch set. They must NOT be treated as stale —
+    neither deleted nor counted toward the safety-threshold percentage.
+    """
+    # 8 issues belong to the now-frozen cycle 25.10
+    for i in range(1, 9):
+        _insert_raw_issue(f"FROZEN-{i}", {"summary": f"Frozen {i}", "status": {"name": "Open"}, "labels": ["25.10"]})
+    # 2 issues belong to the active cycle 26.04
+    for i in range(1, 3):
+        _insert_raw_issue(f"LIVE-{i}", {"summary": f"Live {i}", "status": {"name": "Open"}, "labels": ["26.04"]})
+    process_raw_jira_data()
+
+    _setup_jql_prereqs("LIVE")
+
+    # Mark 25.10 as frozen in cycle_config
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute("INSERT INTO cycle_config (cycle, state) VALUES ('25.10', 'frozen') ON CONFLICT (cycle) DO NOTHING")
+        conn.commit()
+
+    # Jira returns only the active 26.04 issues. Without the frozen-cycle guard,
+    # 8 of 10 (80%) would look stale and trip the default 20% threshold.
+    mock_jira_instance = MagicMock()
+    mock_jira_instance.search_issues.return_value = [
+        _make_mock_issue(f"LIVE-{i}", labels=["26.04"]) for i in range(1, 3)
+    ]
+
+    import src.jira_sync as jira_sync_mod
+
+    monkeypatch.setattr(jira_sync_mod.settings, "stale_removal_threshold_pct", 20)
+
+    with patch("src.jira_sync.JIRA", return_value=mock_jira_instance):
+        sync_jira_data()
+
+    with get_db_connection() as conn, conn.cursor() as cur:
+        # Frozen-cycle issues must be untouched
+        cur.execute("SELECT count(*) FROM jira_issue_raw WHERE jira_key LIKE 'FROZEN-%%'")
+        assert cur.fetchone()[0] == 8, "Frozen-cycle issues must be preserved"
+
+        cur.execute("SELECT count(*) FROM roadmap_item WHERE jira_key LIKE 'FROZEN-%%'")
+        assert cur.fetchone()[0] == 8, "Frozen-cycle roadmap_items must be preserved"
+
+        # Live issues remain
+        cur.execute("SELECT count(*) FROM jira_issue_raw WHERE jira_key LIKE 'LIVE-%%'")
+        assert cur.fetchone()[0] == 2
