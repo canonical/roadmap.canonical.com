@@ -146,13 +146,17 @@ def sync_jira_data() -> int:
                 )
 
             # Remove stale issues that no longer match the JQL query
-            # (e.g. a label was removed from the Epic in Jira).
+            # (e.g. a label was removed from the Epic, or the ticket was deleted in Jira).
             # Only delete items whose jira_key is NOT in the current fetch set.
+            #
+            # Consider keys from BOTH tables: an issue deleted in Jira may survive as an
+            # orphan in ``roadmap_item`` whose ``jira_issue_raw`` row is already gone. Keying
+            # only off ``jira_issue_raw`` would leave such orphans on the roadmap forever.
             #
             # Safety guard: if the proportion of stale keys is suspiciously high
             # (e.g. an expired API token causes Jira to return only public-project
             # issues), skip the deletion to avoid nuking the database.
-            cur.execute("SELECT jira_key FROM jira_issue_raw")
+            cur.execute("SELECT jira_key FROM jira_issue_raw UNION SELECT jira_key FROM roadmap_item")
             existing_keys = {row[0] for row in cur.fetchall()}
 
             # Issues belonging to frozen cycles are intentionally excluded from the

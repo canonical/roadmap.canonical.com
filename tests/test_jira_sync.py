@@ -720,3 +720,37 @@ def test_sync_preserves_frozen_cycle_issues(monkeypatch):
         # Live issues remain
         cur.execute("SELECT count(*) FROM jira_issue_raw WHERE jira_key LIKE 'LIVE-%%'")
         assert cur.fetchone()[0] == 2
+
+
+def test_sync_removes_orphaned_roadmap_item(monkeypatch):
+    """A roadmap_item with no matching jira_issue_raw row (e.g. deleted in Jira) is removed.
+
+    Reproduces the case where a ticket deleted in Jira lingers on the roadmap because
+    its ``jira_issue_raw`` row is gone but the ``roadmap_item`` row survives. Stale
+    detection must consider ``roadmap_item`` keys, not only ``jira_issue_raw``.
+    """
+    # Create a roadmap_item, then drop its raw row to simulate an orphan.
+    _insert_raw_issue("ORPHAN-1", {"summary": "Deleted in Jira", "status": {"name": "Open"}, "labels": ["26.04"]})
+    process_raw_jira_data()
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM jira_issue_raw WHERE jira_key = 'ORPHAN-1'")
+        conn.commit()
+        cur.execute("SELECT 1 FROM roadmap_item WHERE jira_key = 'ORPHAN-1'")
+        assert cur.fetchone() is not None, "Orphan roadmap_item should exist before sync"
+
+    _setup_jql_prereqs("NEW")
+
+    # Jira returns a single unrelated live issue; ORPHAN-1 is not in the fetch set.
+    mock_jira_instance = MagicMock()
+    mock_jira_instance.search_issues.return_value = [_make_mock_issue("NEW-1", labels=["26.04"])]
+
+    import src.jira_sync as jira_sync_mod
+
+    monkeypatch.setattr(jira_sync_mod.settings, "stale_removal_threshold_pct", 60)
+
+    with patch("src.jira_sync.JIRA", return_value=mock_jira_instance):
+        sync_jira_data()
+
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM roadmap_item WHERE jira_key = 'ORPHAN-1'")
+        assert cur.fetchone() is None, "Orphaned roadmap_item should be removed during sync"
