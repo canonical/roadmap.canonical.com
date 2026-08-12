@@ -101,14 +101,14 @@ During sync, we don't know which cycles are frozen — we just store the raw car
 ```python
 {
     "health": {
-        "color": "green",     # green, red, orange, blue, black, white
-        "label": "C"          # optional — present for "Done" status
-                              # (green "C" or blue "C" for Added+Done)
+        "color": "green",  # green, red, orange, blue, black, white
+        "label": "C",  # optional — present for "Done" status
+        # (green "C" or blue "C" for Added+Done)
     },
     "carry_over": {
         "color": "purple",
-        "count": 2            # number of carry-over cycles
-    }  # or None if no carry-over
+        "count": 2,  # number of carry-over cycles
+    },  # or None if no carry-over
 }
 ```
 
