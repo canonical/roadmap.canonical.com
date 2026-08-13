@@ -176,8 +176,7 @@ def sync_jira_data() -> int:
             frozen_keys: set[str] = set()
             if frozen_cycles:
                 cur.execute(
-                    "SELECT jira_key FROM roadmap_item "
-                    "WHERE tags && %s::text[] AND NOT (tags && %s::text[])",
+                    "SELECT jira_key FROM roadmap_item WHERE tags && %s::text[] AND NOT (tags && %s::text[])",
                     (frozen_cycles, live_cycles),
                 )
                 frozen_keys = {row[0] for row in cur.fetchall()}
