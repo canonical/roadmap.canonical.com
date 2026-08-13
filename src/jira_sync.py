@@ -159,17 +159,27 @@ def sync_jira_data() -> int:
             cur.execute("SELECT jira_key FROM jira_issue_raw UNION SELECT jira_key FROM roadmap_item")
             existing_keys = {row[0] for row in cur.fetchall()}
 
-            # Issues belonging to frozen cycles are intentionally excluded from the
-            # JQL (``_build_jql`` only queries 'current'/'future' cycles), so they are
-            # never in ``fetched_keys``. They must be preserved — their immutable
-            # snapshot lives in ``cycle_freeze_item`` and they are restored on unfreeze.
-            # Exclude them from stale-removal so they neither get deleted nor inflate
-            # the safety-threshold percentage.
-            cur.execute("SELECT cycle FROM cycle_config WHERE state = 'frozen'")
-            frozen_cycles = [row[0] for row in cur.fetchall()]
+            # Issues that live *exclusively* in frozen cycles are intentionally excluded
+            # from the JQL (``_build_jql`` only queries 'current'/'future' cycles), so they
+            # never appear in ``fetched_keys``. Preserve them — their immutable snapshot
+            # lives in ``cycle_freeze_item`` — so they are neither deleted nor inflate the
+            # safety-threshold percentage.
+            #
+            # An item that ALSO carries a current/future cycle label is expected in the
+            # fetch set; if it is missing it was genuinely deleted (or lost its live label)
+            # and must leave the live view. Its frozen-cycle display is served from
+            # ``cycle_freeze_item`` regardless, so removing the ``roadmap_item`` row is safe.
+            cur.execute("SELECT cycle, state FROM cycle_config")
+            cycle_states = cur.fetchall()
+            frozen_cycles = [c for c, s in cycle_states if s == "frozen"]
+            live_cycles = [c for c, s in cycle_states if s in ("current", "future")]
             frozen_keys: set[str] = set()
             if frozen_cycles:
-                cur.execute("SELECT jira_key FROM roadmap_item WHERE tags && %s::text[]", (frozen_cycles,))
+                cur.execute(
+                    "SELECT jira_key FROM roadmap_item "
+                    "WHERE tags && %s::text[] AND NOT (tags && %s::text[])",
+                    (frozen_cycles, live_cycles),
+                )
                 frozen_keys = {row[0] for row in cur.fetchall()}
 
             candidate_keys = existing_keys - frozen_keys

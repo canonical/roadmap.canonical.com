@@ -722,6 +722,44 @@ def test_sync_preserves_frozen_cycle_issues(monkeypatch):
         assert cur.fetchone()[0] == 2
 
 
+def test_sync_removes_deleted_issue_with_frozen_and_live_tags(monkeypatch):
+    """An item tagged with BOTH a frozen and a live cycle is removed when deleted in Jira.
+
+    The frozen guard must only preserve items that live *exclusively* in frozen cycles.
+    An item carrying a current/future label (here 26.04) is expected in the JQL fetch,
+    so its absence means genuine deletion and it must leave the live view even though it
+    also carries a frozen label (25.10).
+    """
+    # MIXED-1 spans frozen 25.10 and live 26.04; it has since been deleted in Jira.
+    _insert_raw_issue("MIXED-1", {"summary": "Deleted", "status": {"name": "Open"}, "labels": ["25.10", "26.04"]})
+    # A live-only issue that still exists, to keep the stale ratio below threshold.
+    _insert_raw_issue("LIVE-1", {"summary": "Live", "status": {"name": "Open"}, "labels": ["26.04"]})
+    process_raw_jira_data()
+
+    _setup_jql_prereqs("LIVE")
+
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute("INSERT INTO cycle_config (cycle, state) VALUES ('25.10', 'frozen') ON CONFLICT (cycle) DO NOTHING")
+        conn.commit()
+
+    # Jira returns only LIVE-1; MIXED-1 is gone.
+    mock_jira_instance = MagicMock()
+    mock_jira_instance.search_issues.return_value = [_make_mock_issue("LIVE-1", labels=["26.04"])]
+
+    import src.jira_sync as jira_sync_mod
+
+    monkeypatch.setattr(jira_sync_mod.settings, "stale_removal_threshold_pct", 60)
+
+    with patch("src.jira_sync.JIRA", return_value=mock_jira_instance):
+        sync_jira_data()
+
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM roadmap_item WHERE jira_key = 'MIXED-1'")
+        assert cur.fetchone() is None, "Deleted item with a live label must be removed despite a frozen label"
+        cur.execute("SELECT 1 FROM roadmap_item WHERE jira_key = 'LIVE-1'")
+        assert cur.fetchone() is not None, "Still-fetched live item must be preserved"
+
+
 def test_sync_removes_orphaned_roadmap_item(monkeypatch):
     """A roadmap_item with no matching jira_issue_raw row (e.g. deleted in Jira) is removed.
 
