@@ -14,11 +14,12 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
-from starlette.responses import JSONResponse, RedirectResponse
+from starlette.responses import JSONResponse, RedirectResponse, Response
 
+from . import planning
 from .auth import configure_oauth, handle_callback, is_authenticated, login_redirect
 from .database import close_pool, get_async_conn, get_db_connection, open_pool
 from .jira_sync import (
@@ -72,8 +73,21 @@ async def lifespan(application: FastAPI):
     sql = SCHEMA_PATH.read_text()
     with get_db_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(sql)
-        conn.commit()
+            # Split and execute each statement so errors in one don't silently
+            # abort the rest (psycopg executes multiple statements in one
+            # cursor.execute() call, but stops on first error).
+            statements = [s.strip() for s in sql.split(";") if s.strip()]
+            for stmt in statements:
+                # Skip the seed INSERTs that use ON CONFLICT so they don't fail
+                # on empty split, and skip comments
+                if stmt.startswith("--"):
+                    continue
+                try:
+                    cur.execute(stmt + ";")
+                except Exception as exc:
+                    # Idempotent DDL errors (e.g. column already exists) are harmless
+                    logger.warning("Schema statement skipped (may already exist): %s", exc)
+            conn.commit()
     logger.info("Database schema applied")
 
     # Configure OIDC (Authlib)
@@ -122,6 +136,7 @@ _OPENAPI_TAGS = [
     {"name": "Snapshots", "description": "Daily snapshots and change-tracking diffs"},
     {"name": "Cycles", "description": "Cycle lifecycle management (frozen / current / future)"},
     {"name": "Auth", "description": "OIDC authentication flow"},
+    {"name": "Planning", "description": "Capacity planning — roles, members, availability, curves"},
 ]
 
 app = FastAPI(
@@ -588,6 +603,56 @@ async def set_cycle_state_endpoint(cycle: str, body: CycleStateIn, request: Requ
     return {"message": f"Cycle {cycle} state set to {body.state}", **result}
 
 
+class CycleDatesIn(BaseModel):
+    """Input schema for updating cycle start and end dates."""
+
+    start_date: str
+    end_date: str
+
+
+@app.put("/api/v1/cycles/{cycle}/dates", tags=["Cycles"])
+async def set_cycle_dates_endpoint(cycle: str, body: CycleDatesIn, request: Request = None):
+    """Set the start and end dates for a registered cycle."""
+    updated_by = None
+    if request and request.session.get("user"):
+        updated_by = request.session["user"].get("email")
+
+    async with get_async_conn() as conn, conn.cursor() as cur:
+        await cur.execute("SELECT 1 FROM cycle_config WHERE cycle = %s", (cycle,))
+        if not await cur.fetchone():
+            raise HTTPException(status_code=404, detail=f"Cycle {cycle} is not registered")
+
+        await cur.execute(
+            "UPDATE cycle_config SET start_date = %s, end_date = %s, updated_at = now(), updated_by = %s WHERE cycle = %s",
+            (body.start_date, body.end_date, updated_by, cycle),
+        )
+        await conn.commit()
+
+    return {"message": f"Cycle {cycle} dates updated", "start_date": body.start_date, "end_date": body.end_date}
+
+
+@app.get("/api/v1/cycles/{cycle}/dates", tags=["Cycles"])
+async def get_cycle_dates_endpoint(cycle: str):
+    """Get the start and end dates for a registered cycle."""
+    async with get_async_conn() as conn, conn.cursor() as cur:
+        await cur.execute(
+            "SELECT cycle, state, start_date, end_date, updated_at, updated_by FROM cycle_config WHERE cycle = %s",
+            (cycle,),
+        )
+        row = await cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Cycle {cycle} is not registered")
+
+    return {
+        "cycle": row[0],
+        "state": row[1],
+        "start_date": str(row[2]) if row[2] else None,
+        "end_date": str(row[3]) if row[3] else None,
+        "updated_at": row[4].isoformat() if row[4] else None,
+        "updated_by": row[5],
+    }
+
+
 @app.delete("/api/v1/cycles/{cycle}", status_code=200, tags=["Cycles"])
 async def remove_cycle_endpoint(cycle: str):
     """Remove a cycle from the registry (also deletes freeze data if frozen)."""
@@ -645,10 +710,11 @@ async def get_roadmap(
         clauses.append("r.release = %s")
         params.append(release)
 
-    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    clauses.append("r.is_deleted = FALSE")
+    where = f" WHERE {' AND '.join(clauses)}"
     query = (
-        "SELECT r.id, r.jira_key, r.title, r.description, r.status, r.release, r.tags, "
-        "       p.name AS product, r.color_status, r.url, "
+        "SELECT r.id, r.jira_key, r.title, p.name AS product, p.department, "
+        "       r.color_status, r.url, r.tags, "
         "       r.parent_key, r.parent_summary, r.created_at, r.updated_at "
         "FROM roadmap_item r "
         f"LEFT JOIN product p ON p.id = r.product_id{where} "
@@ -852,7 +918,386 @@ async def delete_product(product_id: int):
 
 
 # ---------------------------------------------------------------------------
-# Server-rendered HTML page
+# Capacity Planning Endpoints
+# ---------------------------------------------------------------------------
+
+
+class RoleIn(BaseModel):
+    name: str
+    sort_order: int = 0
+    is_default: bool = False
+
+
+class MemberIn(BaseModel):
+    name: str
+    role_id: int | None = None
+    individual_coefficient: float = 1.0
+    is_active: bool = True
+
+
+class AvailabilityBulkIn(BaseModel):
+    entries: list[dict]
+
+
+class PlanningConfigIn(BaseModel):
+    cycle_id: str
+    team_efficiency: float = Field(0.60, ge=0.01, le=1.00)
+
+
+class EpicEstimateIn(BaseModel):
+    estimates: list[dict]
+
+
+class EpicSelectionIn(BaseModel):
+    cycle: str
+    is_in_roadmap: bool
+    is_dropped: bool = False
+
+
+class EpicProgressIn(BaseModel):
+    cycle: str
+    week_start_date: str
+    remaining_days: int | None = None
+
+
+# --- Roles ---
+
+@app.get("/api/v1/products/{product_id}/roles", tags=["Planning"])
+async def list_roles_endpoint(request: Request, product_id: int):
+    roles = await planning.list_roles(product_id)
+    if request.headers.get("HX-Request") == "true":
+        return templates.TemplateResponse(request, "planning/_roles.html", {"product_id": product_id, "roles": roles})
+    return {"data": roles}
+
+
+@app.post("/api/v1/products/{product_id}/roles", status_code=201, tags=["Planning"])
+async def create_role_endpoint(request: Request, product_id: int, body: RoleIn):
+    changed_by = request.session.get("user", {}).get("email") if request.session.get("user") else None
+    try:
+        role = await planning.create_role(product_id, body.name, body.sort_order, body.is_default, changed_by=changed_by)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if request.headers.get("HX-Request") == "true":
+        roles = await planning.list_roles(product_id)
+        return templates.TemplateResponse(request, "planning/_roles.html", {"product_id": product_id, "roles": roles}, headers={"HX-Trigger": "roles-updated"})
+    return {"data": role}
+
+
+@app.put("/api/v1/products/{product_id}/roles/{role_id}", tags=["Planning"])
+async def update_role_endpoint(request: Request, product_id: int, role_id: int, body: RoleIn):
+    changed_by = request.session.get("user", {}).get("email") if request.session.get("user") else None
+    try:
+        role = await planning.update_role(role_id, body.name, body.sort_order, body.is_default, changed_by=changed_by)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if request.headers.get("HX-Request") == "true":
+        roles = await planning.list_roles(product_id)
+        return templates.TemplateResponse(request, "planning/_roles.html", {"product_id": product_id, "roles": roles}, headers={"HX-Trigger": "roles-updated"})
+    return {"data": role}
+
+
+@app.delete("/api/v1/products/{product_id}/roles/{role_id}", status_code=204, tags=["Planning"])
+async def delete_role_endpoint(request: Request, product_id: int, role_id: int):
+    changed_by = request.session.get("user", {}).get("email") if request.session.get("user") else None
+    await planning.delete_role(role_id, changed_by=changed_by)
+    if request.headers.get("HX-Request") == "true":
+        roles = await planning.list_roles(product_id)
+        return templates.TemplateResponse(request, "planning/_roles.html", {"product_id": product_id, "roles": roles}, headers={"HX-Trigger": "roles-updated"})
+    return None
+
+
+# --- Members ---
+
+@app.get("/api/v1/products/{product_id}/members", tags=["Planning"])
+async def list_members_endpoint(request: Request, product_id: int):
+    members = await planning.list_members(product_id)
+    roles = await planning.list_roles(product_id)
+    if request.headers.get("HX-Request") == "true":
+        return templates.TemplateResponse(request, "planning/_members.html", {"product_id": product_id, "members": members, "roles": roles})
+    return {"data": members}
+
+
+@app.post("/api/v1/products/{product_id}/members", status_code=201, tags=["Planning"])
+async def create_member_endpoint(request: Request, product_id: int, body: MemberIn):
+    from decimal import Decimal
+    changed_by = request.session.get("user", {}).get("email") if request.session.get("user") else None
+    member = await planning.create_member(
+        product_id, body.name, body.role_id, Decimal(str(body.individual_coefficient)), body.is_active
+    )
+    if request.headers.get("HX-Request") == "true":
+        members = await planning.list_members(product_id)
+        roles = await planning.list_roles(product_id)
+        return templates.TemplateResponse(request, "planning/_members.html", {"product_id": product_id, "members": members, "roles": roles}, headers={"HX-Trigger": "members-updated"})
+    return {"data": member}
+
+
+@app.put("/api/v1/products/{product_id}/members/{member_id}", tags=["Planning"])
+async def update_member_endpoint(request: Request, product_id: int, member_id: int, body: MemberIn):
+    from decimal import Decimal
+    changed_by = request.session.get("user", {}).get("email") if request.session.get("user") else None
+    try:
+        member = await planning.update_member(
+            member_id,
+            name=body.name,
+            role_id=body.role_id,
+            individual_coefficient=Decimal(str(body.individual_coefficient)),
+            is_active=body.is_active,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    # Log the update manually for members
+    await planning.write_audit_log(product_id, "team_member", member_id, "UPDATE", None, member, changed_by)
+    if request.headers.get("HX-Request") == "true":
+        members = await planning.list_members(product_id)
+        roles = await planning.list_roles(product_id)
+        return templates.TemplateResponse(request, "planning/_members.html", {"product_id": product_id, "members": members, "roles": roles}, headers={"HX-Trigger": "members-updated,availability-updated"})
+    return {"data": member}
+
+
+@app.delete("/api/v1/products/{product_id}/members/{member_id}", status_code=204, tags=["Planning"])
+async def delete_member_endpoint(request: Request, product_id: int, member_id: int):
+    changed_by = request.session.get("user", {}).get("email") if request.session.get("user") else None
+    try:
+        old = await planning.get_member(member_id)
+    except ValueError:
+        old = None
+    await planning.delete_member(member_id)
+    if old:
+        await planning.write_audit_log(product_id, "team_member", member_id, "DELETE", old, None, changed_by)
+    if request.headers.get("HX-Request") == "true":
+        members = await planning.list_members(product_id)
+        roles = await planning.list_roles(product_id)
+        return templates.TemplateResponse(request, "planning/_members.html", {"product_id": product_id, "members": members, "roles": roles}, headers={"HX-Trigger": "members-updated,availability-updated"})
+    return None
+
+
+# --- Availability ---
+
+@app.get("/api/v1/products/{product_id}/availability", tags=["Planning"])
+async def get_availability_endpoint(request: Request, product_id: int, cycle: str):
+    data = await planning.get_availability(product_id, cycle)
+    if request.headers.get("HX-Request") == "true":
+        # Compute member totals
+        member_totals = {}
+        for m in data.get("members", []):
+            total = sum(data.get("grid", {}).get(m["id"], {}).values())
+            member_totals[m["id"]] = total
+        return templates.TemplateResponse(request, "planning/_availability.html", {
+            "product_id": product_id,
+            "members": data.get("members", []),
+            "weeks": data.get("weeks", []),
+            "grid": data.get("grid", {}),
+            "member_totals": member_totals,
+        })
+    return data
+
+
+@app.post("/api/v1/products/{product_id}/availability/bulk", tags=["Planning"])
+async def bulk_availability_endpoint(request: Request, product_id: int, body: AvailabilityBulkIn):
+    from datetime import date
+    entries = []
+    for e in body.entries:
+        entries.append({
+            "member_id": e["member_id"],
+            "week_start_date": date.fromisoformat(e["week_start_date"]),
+            "days_available": e["days_available"],
+        })
+    result = await planning.bulk_set_availability(entries)
+    if request.headers.get("HX-Request") == "true":
+        return Response(status_code=204, headers={"HX-Trigger": "availability-updated"})
+    return result
+
+
+@app.put("/api/v1/products/{product_id}/availability/{member_id}/{week_start_date}", tags=["Planning"])
+async def set_availability_endpoint(request: Request, product_id: int, member_id: int, week_start_date: str, days_available: int = Query(..., ge=0, le=5)):
+    from datetime import date
+    result = await planning.set_availability(member_id, date.fromisoformat(week_start_date), days_available)
+    if request.headers.get("HX-Request") == "true":
+        return Response(status_code=204, headers={"HX-Trigger": "availability-updated"})
+    return result
+
+
+# --- Planning Config ---
+
+@app.get("/api/v1/products/{product_id}/planning-config", tags=["Planning"])
+async def get_planning_config_endpoint(request: Request, product_id: int):
+    cfg = await planning.get_planning_config(product_id)
+    cycles = await _get_cycles_for_config()
+    if request.headers.get("HX-Request") == "true":
+        return templates.TemplateResponse(request, "planning/_config.html", {"product_id": product_id, "config": cfg, "cycles": cycles})
+    return {"data": cfg}
+
+
+@app.put("/api/v1/products/{product_id}/planning-config", tags=["Planning"])
+async def set_planning_config_endpoint(request: Request, product_id: int, body: PlanningConfigIn):
+    from decimal import Decimal
+    changed_by = request.session.get("user", {}).get("email") if request.session.get("user") else None
+    old_cfg = await planning.get_planning_config(product_id)
+    cfg = await planning.set_planning_config(product_id, body.cycle_id, Decimal(str(body.team_efficiency)))
+    await planning.write_audit_log(product_id, "product_planning_config", product_id, "UPDATE", old_cfg, cfg, changed_by)
+    if request.headers.get("HX-Request") == "true":
+        cycles = await _get_cycles_for_config()
+        return templates.TemplateResponse(request, "planning/_config.html", {"product_id": product_id, "config": cfg, "cycles": cycles}, headers={"HX-Trigger": "config-updated"})
+    return {"data": cfg}
+
+
+async def _get_cycles_for_config():
+    async with get_async_conn() as conn, conn.cursor() as cur:
+        await cur.execute("SELECT cycle FROM cycle_config ORDER BY cycle DESC")
+        return [{"cycle": r[0]} for r in await cur.fetchall()]
+
+
+# --- Epic Estimates ---
+
+@app.get("/api/v1/epics/{item_id}/estimates", tags=["Planning"])
+async def get_epic_estimates_endpoint(item_id: int):
+    return {"data": await planning.get_epic_estimates(item_id)}
+
+
+@app.put("/api/v1/epics/{item_id}/estimates", tags=["Planning"])
+async def set_epic_estimates_endpoint(request: Request, item_id: int, body: EpicEstimateIn):
+    changed_by = request.session.get("user", {}).get("email") if request.session.get("user") else None
+    old_est = await planning.get_epic_estimates(item_id)
+    result = await planning.set_epic_estimates(item_id, body.estimates)
+    # Need product_id for audit log
+    async with get_async_conn() as conn, conn.cursor() as cur:
+        await cur.execute("SELECT product_id FROM roadmap_item WHERE id = %s", (item_id,))
+        row = await cur.fetchone()
+        product_id = row[0] if row else None
+    if product_id:
+        await planning.write_audit_log(product_id, "epic_role_estimate", item_id, "UPDATE", {"estimates": old_est}, {"estimates": result}, changed_by)
+    return {"data": result}
+
+
+# --- Epic Selection ---
+
+@app.get("/api/v1/epics/{item_id}/selection", tags=["Planning"])
+async def get_epic_selection_endpoint(item_id: int, cycle: str):
+    return {"data": await planning.get_epic_selection(item_id, cycle)}
+
+
+@app.put("/api/v1/epics/{item_id}/selection", tags=["Planning"])
+async def set_epic_selection_endpoint(request: Request, item_id: int, body: EpicSelectionIn):
+    changed_by = request.session.get("user", {}).get("email") if request.session.get("user") else None
+    old_sel = await planning.get_epic_selection(item_id, body.cycle)
+    result = await planning.set_epic_selection(item_id, body.cycle, body.is_in_roadmap, body.is_dropped)
+    async with get_async_conn() as conn, conn.cursor() as cur:
+        await cur.execute("SELECT product_id FROM roadmap_item WHERE id = %s", (item_id,))
+        row = await cur.fetchone()
+        product_id = row[0] if row else None
+    if product_id:
+        await planning.write_audit_log(product_id, "epic_cycle_selection", item_id, "UPDATE", old_sel, result, changed_by)
+    return {"data": result}
+
+
+# --- Epic Progress ---
+
+@app.get("/api/v1/epics/{item_id}/progress", tags=["Planning"])
+async def get_epic_progress_endpoint(item_id: int, cycle: str):
+    return await planning.get_epic_progress(item_id, cycle)
+
+
+@app.post("/api/v1/epics/{item_id}/progress", tags=["Planning"])
+async def set_epic_progress_endpoint(request: Request, item_id: int, body: EpicProgressIn):
+    from datetime import date
+    created_by = None
+    if request.session.get("user"):
+        created_by = request.session["user"].get("email")
+    old_prog = await planning.get_epic_progress(item_id, body.cycle)
+    result = await planning.set_epic_progress(
+        item_id, date.fromisoformat(body.week_start_date), body.remaining_days, created_by
+    )
+    async with get_async_conn() as conn, conn.cursor() as cur:
+        await cur.execute("SELECT product_id FROM roadmap_item WHERE id = %s", (item_id,))
+        row = await cur.fetchone()
+        product_id = row[0] if row else None
+    if product_id:
+        await planning.write_audit_log(product_id, "epic_weekly_progress", item_id, "UPDATE", old_prog, result, created_by)
+    return {"data": result}
+
+
+# --- Curves ---
+
+@app.get("/api/v1/products/{product_id}/curves", tags=["Planning"])
+async def get_curves_endpoint(product_id: int, cycle: str):
+    return await planning.calculate_curves(product_id, cycle)
+
+
+# --- Undo ---
+
+@app.post("/api/v1/products/{product_id}/undo", tags=["Planning"])
+async def undo_endpoint(product_id: int, request: Request):
+    changed_by = None
+    if request.session.get("user"):
+        changed_by = request.session["user"].get("email")
+    try:
+        result = await planning.undo_last_change(product_id, changed_by)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"data": result}
+
+
+# ---------------------------------------------------------------------------
+# Planning Page (server-rendered HTML)
+# ---------------------------------------------------------------------------
+
+@app.get("/products/{product_id}/planning", response_class=HTMLResponse)
+async def planning_page(request: Request, product_id: int, cycle: str | None = Query(None)):
+    """Render the capacity planning page for a product."""
+    dates_populated = False
+    async with get_async_conn() as conn, conn.cursor() as cur:
+        # Verify product exists
+        await cur.execute("SELECT id, name, department FROM product WHERE id = %s", (product_id,))
+        product_row = await cur.fetchone()
+        if not product_row:
+            raise HTTPException(status_code=404, detail="Product not found")
+        product_name, department = product_row[1], product_row[2]
+
+        # Check whether any cycles exist at all
+        await cur.execute("SELECT COUNT(*) FROM cycle_config")
+        total_cycles = (await cur.fetchone())[0]
+
+        # Check whether any cycles already have dates
+        await cur.execute("SELECT COUNT(*) FROM cycle_config WHERE start_date IS NOT NULL AND end_date IS NOT NULL")
+        count_with_dates = (await cur.fetchone())[0]
+
+        # Auto-populate dates using Canonical convention if none exist
+        if total_cycles > 0 and count_with_dates == 0:
+            updated = await planning.auto_populate_cycle_dates()
+            dates_populated = updated > 0
+
+        # Available cycles with dates
+        await cur.execute(
+            "SELECT cycle, state, start_date, end_date FROM cycle_config WHERE start_date IS NOT NULL AND end_date IS NOT NULL ORDER BY cycle DESC"
+        )
+        cycles = [
+            {"cycle": r[0], "state": r[1], "start_date": str(r[2]) if r[2] else None, "end_date": str(r[3]) if r[3] else None}
+            for r in await cur.fetchall()
+        ]
+
+        # Default to current cycle, or latest cycle
+        selected_cycle = cycle
+        if not selected_cycle and cycles:
+            current = [c for c in cycles if c["state"] == "current"]
+            selected_cycle = current[0]["cycle"] if current else cycles[0]["cycle"]
+
+    return templates.TemplateResponse(
+        request,
+        "planning.html",
+        {
+            "product_id": product_id,
+            "product_name": product_name,
+            "department": department,
+            "cycles": cycles,
+            "selected_cycle": selected_cycle,
+            "total_cycles": total_cycles,
+            "dates_populated": dates_populated,
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Server-rendered HTML page (original roadmap)
 # ---------------------------------------------------------------------------
 
 CYCLE_RE = re.compile(r"^\d{2}\.\d{2}$")
@@ -882,10 +1327,12 @@ async def _query_filter_options(department: str | None = None) -> dict:
         for r in await cur.fetchall():
             dept_products.setdefault(r[0], []).append(r[1])
 
-        # Cycles come from the tags array (labels) on roadmap_item.
+        # Cycles come from the tags array (labels) on roadmap_item (non-deleted).
         # unnest expands the array; we then filter for XX.XX pattern in Python.
         # Also include cycles that exist in cycle_config or cycle_freeze.
-        await cur.execute("SELECT DISTINCT unnest(tags) AS tag FROM roadmap_item")
+        await cur.execute(
+            "SELECT DISTINCT unnest(tags) AS tag FROM roadmap_item WHERE is_deleted = FALSE"
+        )
         all_tags = [r[0] for r in await cur.fetchall()]
         live_cycles = {t for t in all_tags if CYCLE_RE.match(t)}
 
@@ -989,11 +1436,13 @@ async def _query_roadmap_items(
         clauses.append("p.name = %s")
         params.append(product)
 
-    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    clauses.append("r.is_deleted = FALSE")
+    where = f" WHERE {' AND '.join(clauses)}"
     query = (
         "SELECT r.id, r.jira_key, r.title, p.name AS product, p.department, "
         "       r.color_status, r.url, r.tags, "
-        "       r.parent_key, r.parent_summary, r.rank, r.parent_rank "
+        "       r.parent_key, r.parent_summary, r.rank, r.parent_rank, "
+        "       r.assignee_name, r.priority, r.t_shirt_size "
         "FROM roadmap_item r "
         f"JOIN product p ON p.id = r.product_id{where} "
         "ORDER BY NULLIF(r.parent_rank, '') NULLS LAST, "
@@ -1190,6 +1639,7 @@ async def roadmap_page(
         cycle = default_cycle
 
     # Skip querying if no product selected
+    selected_product_id = None
     if not selected_product:
         grouped_items: OrderedDict = OrderedDict()
         objective_urls: dict[str, str] = {}
@@ -1200,6 +1650,11 @@ async def roadmap_page(
             product=selected_product,
             cycle=cycle,
         )
+        # Look up product id for planning link
+        async with get_async_conn() as conn, conn.cursor() as cur:
+            await cur.execute("SELECT id FROM product WHERE name = %s", (selected_product,))
+            prow = await cur.fetchone()
+            selected_product_id = prow[0] if prow else None
 
     return templates.TemplateResponse(
         request,
@@ -1210,6 +1665,7 @@ async def roadmap_page(
             "cycle_states": options["cycle_states"],
             "selected_department": department or "",
             "selected_product": selected_product or "",
+            "selected_product_id": selected_product_id,
             "product_department": next(
                 (d for d, ps in options["dept_products"].items() if selected_product in ps),
                 "",

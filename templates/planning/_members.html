@@ -1,0 +1,69 @@
+<div>
+  {% for m in members %}
+  <div class="member-row" id="member-{{ m.id }}">
+    <span style="min-width: 8rem;">{{ m.name }}</span>
+    <select onchange="updateMember({{ m.id }}, 'role_id', this.value)">
+      <option value="">—</option>
+      {% for role in roles %}
+      <option value="{{ role.id }}" {% if m.role_id == role.id %}selected{% endif %}>{{ role.name }}</option>
+      {% endfor %}
+    </select>
+    <input type="number" class="small-input" step="0.05" min="0.05" max="1.0"
+           value="{{ m.individual_coefficient }}" title="Individual coefficient"
+           onchange="updateMember({{ m.id }}, 'individual_coefficient', this.value)">
+    <label><input type="checkbox" {% if m.is_active %}checked{% endif %} onchange="updateMember({{ m.id }}, 'is_active', this.checked)"> active</label>
+    <span class="action-link" onclick="deleteMember({{ m.id }})">remove</span>
+  </div>
+  {% endfor %}
+  <form class="member-row" id="add-member-form" onsubmit="event.preventDefault(); addMember(this);">
+    <input type="text" name="name" placeholder="Name" required style="width: 8rem;">
+    <select name="role_id">
+      <option value="">— role —</option>
+      {% for role in roles %}
+      <option value="{{ role.id }}">{{ role.name }}</option>
+      {% endfor %}
+    </select>
+    <input type="number" name="individual_coefficient" class="small-input" step="0.05" min="0.05" max="1.0" value="1.0" title="Individual coefficient">
+    <button type="submit" class="p-button--positive p-button--small">Add</button>
+  </form>
+</div>
+<script>
+(function() {
+  var productId = {{ product_id }};
+  window.updateMember = function(memberId, field, value) {
+    var data = {};
+    data[field] = (field === 'role_id') ? (value ? parseInt(value) : null) :
+                  (field === 'is_active') ? !!value :
+                  (field === 'individual_coefficient') ? parseFloat(value) : value;
+    fetch('/api/v1/products/' + productId + '/members/' + memberId, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+  };
+  window.deleteMember = function(memberId) {
+    if (!confirm('Remove this member?')) return;
+    fetch('/api/v1/products/' + productId + '/members/' + memberId, { method: 'DELETE' })
+      .then(function() {
+        loadFragment('/api/v1/products/' + productId + '/members', 'members-content');
+        loadFragment('/api/v1/products/' + productId + '/availability?cycle=' + currentCycle, 'availability-content');
+      });
+  };
+  window.addMember = function(form) {
+    var data = {
+      name: form.querySelector('[name="name"]').value,
+      role_id: form.querySelector('[name="role_id"]').value || null,
+      individual_coefficient: parseFloat(form.querySelector('[name="individual_coefficient"]').value),
+      is_active: true
+    };
+    fetch('/api/v1/products/' + productId + '/members', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    }).then(function() {
+      loadFragment('/api/v1/products/' + productId + '/members', 'members-content');
+      loadFragment('/api/v1/products/' + productId + '/availability?cycle=' + currentCycle, 'availability-content');
+    });
+  };
+})();
+</script>

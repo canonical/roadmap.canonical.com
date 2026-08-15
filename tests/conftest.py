@@ -58,9 +58,11 @@ def _setup_test_database():
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "DROP TABLE IF EXISTS sync_metadata, cycle_config, cycle_freeze_item, cycle_freeze,"
-                " roadmap_snapshot, roadmap_item,"
-                " product_jira_source, jira_issue_raw, product CASCADE"
+                "DROP TABLE IF EXISTS planning_audit_log, epic_weekly_progress, epic_cycle_selection, epic_role_estimate, "
+                "product_planning_config, member_weekly_availability, team_member, product_role, "
+                "sync_metadata, cycle_config, cycle_freeze_item, cycle_freeze, "
+                "roadmap_snapshot, roadmap_item, "
+                "product_jira_source, jira_issue_raw, product CASCADE"
             )
         conn.commit()
         with conn.cursor() as cur:
@@ -72,9 +74,11 @@ def _setup_test_database():
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "DROP TABLE IF EXISTS sync_metadata, cycle_config, cycle_freeze_item, cycle_freeze,"
-                " roadmap_snapshot, roadmap_item,"
-                " product_jira_source, jira_issue_raw, product CASCADE"
+                "DROP TABLE IF EXISTS planning_audit_log, epic_weekly_progress, epic_cycle_selection, epic_role_estimate, "
+                "product_planning_config, member_weekly_availability, team_member, product_role, "
+                "sync_metadata, cycle_config, cycle_freeze_item, cycle_freeze, "
+                "roadmap_snapshot, roadmap_item, "
+                "product_jira_source, jira_issue_raw, product CASCADE"
             )
         conn.commit()
 
