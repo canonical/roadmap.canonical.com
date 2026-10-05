@@ -946,3 +946,77 @@ def test_full_lifecycle_scenario(client):
     # 26.04 should still appear (live item exists) but as unregistered
     if "26.04" in cycles_by_name:
         assert cycles_by_name["26.04"]["state"] is None
+
+
+# ===========================================================================
+# Product history — renamed / deleted products remain selectable
+# ===========================================================================
+
+
+def _rename_product(product_id: int, name: str, department: str | None = None) -> None:
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE product SET name = %s, department = COALESCE(%s, department) WHERE id = %s",
+            (name, department, product_id),
+        )
+        conn.commit()
+
+
+def test_renamed_product_shows_frozen_history_under_new_name(client):
+    pid = _insert_product("OldName", "DeptA")
+    _insert_roadmap_item("RN-1", "Frozen epic", "Done", "green", pid, tags=["25.10"], label="C")
+    register_cycle("25.10", state="frozen")
+
+    _rename_product(pid, "NewName", "DeptB")
+
+    resp = client.get("/", params={"product": "NewName", "cycle": "25.10"})
+    assert resp.status_code == 200
+    assert "Frozen epic" in resp.text
+    assert '"OldName"' not in resp.text
+
+
+def test_renamed_product_frozen_history_with_department_filter(client):
+    pid = _insert_product("OldName", "DeptA")
+    _insert_roadmap_item("RN-2", "Frozen epic", "Done", "green", pid, tags=["25.10"], label="C")
+    register_cycle("25.10", state="frozen")
+
+    _rename_product(pid, "NewName", "DeptB")
+
+    resp = client.get("/", params={"department": "DeptB", "product": "NewName", "cycle": "25.10"})
+    assert resp.status_code == 200
+    assert "Frozen epic" in resp.text
+
+
+def test_deleted_product_is_archived_and_shows_frozen_history(client):
+    pid = _insert_product("Gone", "OldDept")
+    _insert_roadmap_item("DL-1", "Historic epic", "Done", "green", pid, tags=["25.10", "26.04"], label="C")
+    register_cycle("25.10", state="frozen")
+    register_cycle("26.04", state="current")
+
+    assert client.delete(f"/api/v1/products/{pid}").status_code == 204
+
+    resp = client.get("/", params={"product": "Gone", "cycle": "25.10"})
+    assert resp.status_code == 200
+    assert "Historic epic" in resp.text
+    assert 'new Set(["Gone"])' in resp.text
+    assert '"OldDept"' in resp.text
+
+    resp = client.get("/", params={"product": "Gone", "cycle": "26.04"})
+    assert "Historic epic" not in resp.text
+
+
+def test_deleted_then_recreated_product_merges_history(client):
+    old_pid = _insert_product("Phoenix")
+    _insert_roadmap_item("PX-1", "Old incarnation", "Done", "green", old_pid, tags=["25.10"], label="C")
+    register_cycle("25.10", state="frozen")
+    client.delete(f"/api/v1/products/{old_pid}")
+
+    new_pid = _insert_product("Phoenix")
+    _insert_roadmap_item("PX-2", "New incarnation", "Open", "green", new_pid, tags=["26.04"])
+
+    resp = client.get("/", params={"product": "Phoenix", "cycle": "25.10"})
+    assert "Old incarnation" in resp.text
+    assert "new Set([])" in resp.text
+
+    resp = client.get("/", params={"product": "Phoenix", "cycle": "26.04"})
+    assert "New incarnation" in resp.text

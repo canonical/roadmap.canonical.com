@@ -53,6 +53,8 @@ curl -X PUT http://localhost:8000/api/v1/products/1 \
   }'
 ```
 
+Renaming a product (or moving it to another department) keeps its history: frozen cycles are matched by product id, so the product's frozen items appear under its new name in the selector.
+
 ## Delete a product
 
 ```bash
@@ -60,6 +62,8 @@ curl -X DELETE http://localhost:8000/api/v1/products/1
 ```
 
 Roadmap items that referenced this product will have their `product_id` set to `NULL` (they are **not** deleted).
+
+If the product appears in any frozen cycle, it stays in the product selector marked **(archived)**. The name and department come from its latest frozen cycle, and its frozen items remain viewable. If a product with the same name is created later, both sets of items are listed under that one name. Past cycles that were never frozen cannot be recovered for a deleted product.
 
 ## Jira source mapping syntax
 

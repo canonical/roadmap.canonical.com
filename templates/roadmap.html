@@ -48,7 +48,7 @@
     <div class="p-form__group">
       <label for="product-input">Product</label>
       <div class="typeahead" id="product-typeahead">
-        <input type="text" class="typeahead__input p-form-validation__input" id="product-input" placeholder="" autocomplete="off" value="{{ selected_product or '' }}" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="product-list" />
+        <input type="text" class="typeahead__input p-form-validation__input" id="product-input" placeholder="" autocomplete="off" value="{{ selected_product ~ (' (archived)' if selected_product in archived_products else '') if selected_product else '' }}" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="product-list" />
         <div class="typeahead__list" id="product-list" role="listbox"></div>
       </div>
     </div>
@@ -179,6 +179,7 @@
 {% block scripts %}
 <script>
   var deptProducts = {{ dept_products | tojson }};
+  var archivedProducts = new Set({{ archived_products | tojson }});
   var form = document.getElementById('filter-form');
   var hiddenDept = document.getElementById('hidden-department');
   var hiddenProduct = document.getElementById('hidden-product');
@@ -217,8 +218,9 @@
   })();
 
   // ── Typeahead helper ──────────────────────────────────────────
-  function initTypeahead(inputEl, listEl, items, hiddenEl, onSelect, emptyDisplay) {
+  function initTypeahead(inputEl, listEl, items, hiddenEl, onSelect, emptyDisplay, labelFn) {
     var activeIndex = -1;
+    var label = labelFn || function(item) { return item; };
 
     function getItems() { return typeof items === 'function' ? items() : items; }
 
@@ -251,7 +253,7 @@
       activeIndex = -1;
       var q = (filter || '').toLowerCase();
       var matches = getItems().filter(function(item) {
-        return !q || item.toLowerCase().indexOf(q) !== -1;
+        return !q || label(item).toLowerCase().indexOf(q) !== -1;
       });
       if (matches.length === 0) {
         listEl.style.display = 'none';
@@ -264,10 +266,11 @@
         opt.setAttribute('role', 'option');
         opt.id = listEl.id + '-opt-' + i;
         if (item === (hiddenEl.value || emptyDisplay)) opt.classList.add('is-selected');
-        opt.textContent = item;
+        opt.textContent = label(item);
+        opt.dataset.value = item;
         opt.addEventListener('mousedown', function(e) {
           e.preventDefault();
-          inputEl.value = item;
+          inputEl.value = label(item);
           hiddenEl.value = item;
           listEl.style.display = 'none';
           setExpanded(false);
@@ -294,7 +297,7 @@
       setTimeout(function() {
         listEl.style.display = 'none';
         setExpanded(false);
-        inputEl.value = hiddenEl.value || emptyDisplay || '';
+        inputEl.value = hiddenEl.value ? label(hiddenEl.value) : (emptyDisplay || '');
       }, 150);
     });
 
@@ -310,8 +313,8 @@
       } else if (e.key === 'Enter') {
         e.preventDefault();
         if (activeIndex >= 0 && opts[activeIndex]) {
-          var val = opts[activeIndex].textContent;
-          inputEl.value = val;
+          var val = opts[activeIndex].dataset.value;
+          inputEl.value = label(val);
           hiddenEl.value = val;
           listEl.style.display = 'none';
           setExpanded(false);
@@ -325,10 +328,11 @@
             onSelect();
           } else {
             var match = getItems().find(function(item) {
-              return item.toLowerCase() === q.toLowerCase();
+              var ql = q.toLowerCase();
+              return item.toLowerCase() === ql || label(item).toLowerCase() === ql;
             });
             if (match) {
-              inputEl.value = match;
+              inputEl.value = label(match);
               hiddenEl.value = match;
               listEl.style.display = 'none';
               setExpanded(false);
@@ -380,6 +384,8 @@
 
     initTypeahead(input, list, getProducts, hiddenProduct, function() {
       form.submit();
+    }, undefined, function(p) {
+      return archivedProducts.has(p) ? p + ' (archived)' : p;
     });
   })();
 

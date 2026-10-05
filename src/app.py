@@ -882,6 +882,23 @@ async def _query_filter_options(department: str | None = None) -> dict:
         for r in await cur.fetchall():
             dept_products.setdefault(r[0], []).append(r[1])
 
+        # Deleted products survive only in frozen data; names colliding with a live product are folded into it.
+        live_names = {p for ps in dept_products.values() for p in ps}
+        archived_products: list[str] = []
+        for name, dept in await _query_archived_products(cur):
+            if name in live_names or name in archived_products:
+                continue
+            archived_products.append(name)
+            dept_products.setdefault(dept, []).append(name)
+            if dept not in departments:
+                departments.append(dept)
+            if not department or dept == department:
+                products.append(name)
+        departments.sort()
+        products.sort()
+        for ps in dept_products.values():
+            ps.sort()
+
         # Cycles come from the tags array (labels) on roadmap_item.
         # unnest expands the array; we then filter for XX.XX pattern in Python.
         # Also include cycles that exist in cycle_config or cycle_freeze.
@@ -907,7 +924,39 @@ async def _query_filter_options(department: str | None = None) -> dict:
         "cycles": cycles,
         "dept_products": dept_products,
         "cycle_states": cycle_states,
+        "archived_products": sorted(archived_products),
     }
+
+
+async def _query_archived_products(cur) -> list[tuple[str, str]]:
+    """Return ``(name, department)`` of deleted products, as recorded in their latest frozen cycle."""
+    await cur.execute(
+        "SELECT DISTINCT ON (f.product_id) f.product_name, f.department "
+        "FROM cycle_freeze_item f "
+        "WHERE f.product_id IS NOT NULL AND f.product_name IS NOT NULL "
+        "  AND NOT EXISTS (SELECT 1 FROM product p WHERE p.id = f.product_id) "
+        "ORDER BY f.product_id, f.cycle DESC"
+    )
+    return [(r[0], r[1] or "Unassigned") for r in await cur.fetchall()]
+
+
+async def _resolve_product_ids(product: str) -> list[int]:
+    """Map a selector name to product ids: the live product plus deleted ones last frozen under that name."""
+    async with get_async_conn() as conn, conn.cursor() as cur:
+        await cur.execute("SELECT id FROM product WHERE name = %s", (product,))
+        ids = [r[0] for r in await cur.fetchall()]
+        await cur.execute(
+            "SELECT product_id FROM ("
+            "  SELECT DISTINCT ON (f.product_id) f.product_id, f.product_name "
+            "  FROM cycle_freeze_item f "
+            "  WHERE f.product_id IS NOT NULL "
+            "    AND NOT EXISTS (SELECT 1 FROM product p WHERE p.id = f.product_id) "
+            "  ORDER BY f.product_id, f.cycle DESC"
+            ") latest WHERE product_name = %s",
+            (product,),
+        )
+        ids.extend(r[0] for r in await cur.fetchall())
+    return ids
 
 
 async def _query_frozen_items_for_cycle(
@@ -919,12 +968,13 @@ async def _query_frozen_items_for_cycle(
     clauses: list[str] = ["f.cycle = %s"]
     params: list = [frozen_cycle]
 
-    if department:
+    # Match by product_id so renamed products keep their history; frozen department may be stale.
+    if product:
+        clauses.append("f.product_id = ANY(%s)")
+        params.append(await _resolve_product_ids(product))
+    elif department:
         clauses.append("f.department = %s")
         params.append(department)
-    if product:
-        clauses.append("f.product_name = %s")
-        params.append(product)
 
     where = " WHERE " + " AND ".join(clauses)
     query = (
@@ -1207,6 +1257,7 @@ async def roadmap_page(
         {
             "cycles": options["cycles"],
             "dept_products": options["dept_products"],
+            "archived_products": options["archived_products"],
             "cycle_states": options["cycle_states"],
             "selected_department": department or "",
             "selected_product": selected_product or "",
