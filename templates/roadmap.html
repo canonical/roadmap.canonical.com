@@ -1,9 +1,468 @@
 {% extends "base.html" %}
 
-{% block title %}Roadmap{% endblock %}
+{% block title %}{% if selected_product %}{{ selected_product }} · {{ selected_cycle }} – {% endif %}Roadmap{% endblock %}
+
+{% set statuses = [
+  ('completed',   'Completed'),
+  ('in-progress', 'In progress'),
+  ('at-risk',     'At risk'),
+  ('rejected',    'Missed'),
+  ('added',       'Added'),
+  ('dropped',     'Dropped'),
+  ('unknown',     'Inactive'),
+] %}
+
+{% block head %}
+<style>
+  /* ── status colours & squares ───────────────────────────────────── */
+  [data-status="completed"]   { --status: var(--status-completed); }
+  [data-status="in-progress"] { --status: var(--status-in-progress); }
+  [data-status="at-risk"]     { --status: var(--status-at-risk); }
+  [data-status="rejected"]    { --status: var(--status-missed); }
+  [data-status="added"]       { --status: var(--status-added); }
+  [data-status="dropped"]     { --status: var(--status-dropped); }
+  [data-status="unknown"]     { --status: var(--status-inactive); }
+
+  /* Status square: solid status colour, with the Jira label (e.g. "C") inside. */
+  .status-square {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border: 1px solid rgba(0, 0, 0, .15);
+    border-radius: 2px;
+    background: var(--status);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+    text-transform: uppercase;
+  }
+  .status-square[data-status="unknown"] { border-color: var(--border-strong); color: var(--text-muted); }
+  .status-square--sm { width: 14px; height: 14px; font-size: 8px; }
+
+  /* ── segmented progress bars ────────────────────────────────────── */
+  .seg-bar {
+    display: flex;
+    overflow: hidden;
+    background: #eee;
+  }
+  .seg-bar > span { background: var(--status); }
+  .seg-bar--lg { height: 8px; border-radius: 4px; }
+  .seg-bar--sm { width: 120px; height: 4px; border-radius: 2px; flex-shrink: 0; }
+
+  /* ── sidebar ────────────────────────────────────────────────────── */
+  .sidebar {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    padding: 0 16px 20px;  /* no top padding: the logo tag sits flush with the top edge */
+    background: var(--bg-sidebar);
+    border-right: 1px solid var(--border);
+  }
+  /* ── sidebar logo (Vanilla tagged logo, as on main) ── */
+  .sidebar-logo.p-panel__header {
+    display: flex;
+    align-items: center;
+    margin: 0 0 .5rem;
+    padding: 0;
+  }
+  .sidebar-logo .p-navigation__tagged-logo {
+    flex: 1;
+    min-width: 0;
+  }
+  a.clear-filters,
+  a.clear-filters:visited {
+    display: flex;
+    align-items: center;
+    margin-left: auto;
+    flex-shrink: 0;
+    color: #333;
+    text-decoration: none;
+    cursor: pointer;
+  }
+  .clear-filters:hover {
+    color: #c7162b;
+  }
+
+  .filter-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .field {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    padding: 0;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .field__control,
+  select.field__control,
+  input.field__control {
+    width: 100%;
+    margin: 0;
+    padding: 8px;
+    font-size: 14px;
+    color: var(--text);
+    background-color: var(--bg);  /* not the shorthand: keeps Vanilla's select chevron */
+    border: 0;
+    border-bottom: 1px solid var(--border-strong);
+    border-radius: 0;
+  }
+  .field__control:focus { outline: 2px solid var(--link); outline-offset: -2px; }
+
+  .status-filter { display: flex; flex-direction: column; gap: 2px; }
+  .status-filter__rows { display: flex; flex-direction: column; gap: 2px; }
+  .layout button.status-filter__toggle {
+    display: none;
+    align-items: center;
+    gap: 8px;
+    padding: 0;
+    border: 0;
+    background: none;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text);
+    cursor: pointer;
+  }
+  .status-filter__toggle[aria-expanded="true"] .group__chev { transform: rotate(90deg); }
+  .status-filter__active { font-size: 12px; font-weight: 400; color: var(--text-muted); }
+  .status-filter__head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 6px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  button.link-button {
+    padding: 0;
+    border: 0;
+    background: none;
+    font-size: 12px;
+    color: var(--link);
+    cursor: pointer;
+  }
+  button.link-button[hidden] { display: none; }
+  button.status-filter__row {
+    display: grid;
+    grid-template-columns: 20px 1fr auto;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 8px;
+    border: 0;
+    border-radius: 2px;
+    background: transparent;
+    font-size: 14px;
+    color: var(--text);
+    text-align: left;
+    cursor: pointer;
+  }
+  button.status-filter__row:hover { background: #ececec; }
+  button.status-filter__row[aria-pressed="true"] { background: #e2e2e2; }
+  .status-filter__row.is-empty { opacity: .45; }
+  .status-filter__count {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ── reset Vanilla's default button/field chrome on custom controls ── */
+  .layout button:not(.p-segmented-control__button),
+  .layout select,
+  .layout input {
+    margin: 0;
+    min-width: 0;
+    line-height: inherit;
+    font-weight: inherit;
+  }
+  .layout button:not(.p-segmented-control__button) { min-height: 0; transition: none; }
+  .layout label { margin: 0; padding: 0; max-width: none; }
+
+  /* ── typeahead ──────────────────────────────────────────────────── */
+  .typeahead { position: relative; }
+  .typeahead__list {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    max-height: 14rem;
+    overflow-y: auto;
+    padding: 4px 0;
+    background: var(--bg);
+    border: 1px solid #ddd;
+    border-radius: 2px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, .12);
+    z-index: 50;
+  }
+  .typeahead__option {
+    padding: 7px 12px;
+    font-size: 14px;
+    color: var(--text);
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .typeahead__option:hover,
+  .typeahead__option.is-highlighted { background: #f2f2f2; }
+  .typeahead__option.is-selected { font-weight: 500; }
+
+  /* ── sync-status indicator ──────────────────────────────────────── */
+  .sync-indicator {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: auto;
+    font-size: 12px;
+    color: var(--text-muted);
+    cursor: default;
+  }
+  .sync-icon { width: 14px; height: 14px; flex-shrink: 0; }
+  .sync-icon--ok    { color: var(--status-completed); }
+  .sync-icon--stale { color: var(--brand); }
+  .sync-icon--none  { color: var(--text-faint); }
+  .sync-icon--fail  { color: var(--status-missed); }
+  .sync-tooltip {
+    display: none;
+    position: absolute;
+    bottom: 100%;
+    left: 0;
+    margin-bottom: 6px;
+    padding: 8px 12px;
+    max-width: 28rem;
+    background: #333;
+    color: #fff;
+    border-radius: 2px;
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre;
+    z-index: 100;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, .25);
+  }
+  .sync-indicator:hover .sync-tooltip { display: block; }
+
+  /* ── main header ────────────────────────────────────────────────── */
+  .page-header {
+    padding: 20px 32px 0;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+  }
+  .page-header__top {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .page-header__dept {
+    font-size: 12px;
+    color: var(--text-muted);
+    letter-spacing: .06em;
+    text-transform: uppercase;
+  }
+  .page-header__title { margin: 2px 0 0; font-size: 28px; font-weight: 300; line-height: 1.2; }
+  .page-header__cycle { color: var(--text-faint); }
+  .page-header__tools { display: flex; gap: 12px; align-items: center; }
+  input.search {
+    width: 220px;
+    padding: 8px 10px;
+    font-size: 14px;
+    background: var(--bg-input);
+    border: 0;
+    border-bottom: 1px solid var(--border-strong);
+    border-radius: 0;
+    outline: none;
+  }
+  input.search:focus { background: var(--bg-input); border-bottom-color: var(--text); }
+  .page-header__tools .p-segmented-control,
+  .page-header__tools .p-segmented-control__button { margin: 0; }
+
+  .summary { display: flex; flex-direction: column; gap: 8px; padding: 20px 0 16px; }
+  .summary__legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 20px;
+    font-size: 13px;
+  }
+  .summary__legend > span { display: inline-flex; gap: 6px; align-items: center; }
+  .summary__legend .status-square { top:1px; position: relative; }
+  .summary__total { color: var(--text); }
+
+  /* ── list view ──────────────────────────────────────────────────── */
+  .list-view { padding: 8px 32px 120px; max-width: 1040px; }
+
+  .list-end {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-top: 56px;
+    font-size: 12px;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+  }
+  .list-end[hidden] { display: none; }
+  .list-end::before,
+  .list-end::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+  }
+  .list-end::before { background: linear-gradient(to right, transparent, var(--border)); }
+  .list-end::after  { background: linear-gradient(to left, transparent, var(--border)); }
+  .list-end__mark {
+    width: 7px;
+    height: 7px;
+    background: var(--brand);
+    transform: rotate(45deg);
+  }
+  .group { padding: 6px 0; border-bottom: 1px solid #eee; }
+  .group__head { display: flex; align-items: center; gap: 12px; padding: 8px 0; }
+  button.group__toggle,
+  button.group__toggle:hover,
+  button.group__toggle[aria-expanded] {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--text);
+    text-align: left;
+    cursor: pointer;
+  }
+  /* The triangle's bounding box is centred in a 14px square, so rotating the
+     square about its centre keeps the arrow in place. */
+  .group__chev {
+    display: inline-flex;
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+    color: var(--text-muted);
+    transition: transform .15s;
+  }
+  .group__chev svg { display: block; }
+  button.group__toggle[aria-expanded="true"] .group__chev { transform: rotate(90deg); }
+  .group__name { font-size: 16px; font-weight: 500; }
+  .group__count { font-size: 12px; color: var(--text-muted); }
+  .group__spacer { flex: 1; }
+  .group__epic,
+  .group__epic:visited { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+  .group__items { list-style: none; margin: 0; padding: 0 0 6px 24px; }
+  .group__items[hidden] { display: none; }
+
+  .item {
+    display: grid;
+    grid-template-columns: 20px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 14px;
+    margin: 0 -10px;
+    padding: 6px 10px;
+    border-radius: 2px;
+  }
+  .item:hover { background: var(--bg-hover); }
+  .item[hidden] { display: none; }
+  .item.is-current { background: #eaf1fb; box-shadow: inset 3px 0 0 var(--link); }
+  .item.is-current .item__title:focus,
+  .board-card.is-current .board-card__title:focus { outline: none; }
+  .item__title,
+  .item__title:visited { font-size: 1rem; line-height: 1.3; color: var(--text); text-wrap: pretty; }
+  .item__meta { display: flex; align-items: center; gap: 12px; }
+  .item__jira,
+  .item__jira:visited { font-size: 12px; color: var(--text-faint); }
+  .carry-over {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 12px;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+  .carry-over svg { width: 12px; height: 12px; }
+
+  .empty-state { padding: 32px; color: var(--text-muted); font-size: 14px; }
+  .empty-state--center { flex: 1; display: grid; place-items: center; color: var(--text-faint); }
+  .list-view .empty-state { padding: 32px 0; }
+
+  /* ── board view ─────────────────────────────────────────────────── */
+  .board-view {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(240px, 1fr);
+    gap: 16px;
+    padding: 20px 32px 64px;
+    overflow-x: auto;
+  }
+  .board-view[hidden], .list-view[hidden] { display: none; }
+  .board-col {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 200px;
+    padding: 12px;
+    background: var(--bg-sidebar);
+    border-radius: 2px;
+  }
+  .board-col__head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 2px 6px;
+    font-size: 14px;
+    font-weight: 500;
+  }
+  .board-col__count { font-size: 12px; font-weight: 400; color: var(--text-muted); }
+  .board-card {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-top: 3px solid var(--status);
+    border-radius: 2px;
+  }
+  .board-card[data-status="unknown"] { border-top-color: #ccc; }
+  .board-card.is-current { outline: 2px solid var(--link); outline-offset: 1px; }
+  .board-card__group { font-size: 12px; color: var(--text-muted); }
+  .board-card__title,
+  .board-card__title:visited { font-size: 14px; color: var(--text); text-wrap: pretty; }
+
+  /* ── small screens ──────────────────────────────────────────────── */
+  @media (max-width: 768px) {
+    .sidebar { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--border); }
+    .status-filter__label { display: none; }
+    .layout button.status-filter__toggle { display: flex; }
+    .status-filter__head { align-items: center; margin-bottom: 0; }
+    .status-filter:has(.status-filter__toggle[aria-expanded="false"]) .status-filter__rows { display: none; }
+    .page-header { padding: 16px 16px 0; }
+    .page-header__tools { width: 100%; }
+    input.search { flex: 1; width: auto; min-width: 0; }
+    .list-view { padding: 8px 16px 80px; }
+    .board-view { padding: 16px 16px 48px; }
+    .group__items { padding-left: 0; }
+    .group__head .seg-bar--sm { display: none; }
+    .item { gap: 6px 12px; }
+  }
+</style>
+{% endblock %}
 
 {% block sidebar %}
-<aside class="layout-sidebar">
+<aside class="sidebar">
   <div class="p-panel__header sidebar-logo">
     <div class="p-navigation__tagged-logo">
       <a class="p-navigation__link" href="/" aria-label="Canonical Roadmap - Home">
@@ -22,80 +481,72 @@
     {% endif %}
   </div>
 
-  {# ── Cycle selector ────────────────────────────────────────────── #}
-  <form class="filter-bar-sidebar" id="filter-form" method="get" action="/">
+  <form class="filter-fields" id="filter-form" method="get" action="/">
     <input type="hidden" name="department" id="hidden-department" value="{{ selected_department or '' }}" />
     <input type="hidden" name="product" id="hidden-product" value="{{ selected_product or '' }}" />
-    <div class="p-form__group">
-      <label for="cycle">Cycle</label>
-      <select name="cycle" id="cycle" class="p-form-validation__input">
+
+    <label class="field" for="cycle">Cycle
+      <select name="cycle" id="cycle" class="field__control">
         {% for c in cycles %}
           <option value="{{ c }}" {{ 'selected' if c == selected_cycle }}>{{ c }}{% if cycle_states.get(c) == 'frozen' %} 🔒{% endif %}</option>
         {% endfor %}
       </select>
-    </div>
+    </label>
 
-    {# ── Department filter ───────────────────────────────────────── #}
-    <div class="p-form__group">
+    <div class="field">
       <label for="dept-input">Department</label>
       <div class="typeahead" id="dept-typeahead">
-        <input type="text" class="typeahead__input p-form-validation__input" id="dept-input" placeholder="" autocomplete="off" value="{{ selected_department or 'All' }}" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="dept-list" />
+        <input type="text" class="typeahead__input field__control" id="dept-input" autocomplete="off" value="{{ selected_department or 'All' }}" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="dept-list" />
         <div class="typeahead__list" id="dept-list" role="listbox"></div>
       </div>
     </div>
 
-    {# ── Product filter ──────────────────────────────────────────── #}
-    <div class="p-form__group">
+    <div class="field">
       <label for="product-input">Product</label>
       <div class="typeahead" id="product-typeahead">
-        <input type="text" class="typeahead__input p-form-validation__input" id="product-input" placeholder="" autocomplete="off" value="{{ selected_product ~ (' (archived)' if selected_product in archived_products else '') if selected_product else '' }}" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="product-list" />
+        <input type="text" class="typeahead__input field__control" id="product-input" autocomplete="off" value="{{ selected_product ~ (' (archived)' if selected_product in archived_products else '') if selected_product else '' }}" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="product-list" />
         <div class="typeahead__list" id="product-list" role="listbox"></div>
       </div>
     </div>
   </form>
 
-  {# ── Status filter (legend) ────────────────────────────────────── #}
-  <div class="sidebar-section-title">Status</div>
-  <div id="legend-bar">
-    <span class="legend-filter" data-health="completed">
-      <span class="color-cell color-cell--green">C</span> Completed
-      <span class="legend-stat"></span>
-    </span>
-    <span class="legend-filter" data-health="in-progress">
-      <span class="color-cell color-cell--green">&nbsp;</span> In Progress
-      <span class="legend-stat"></span>
-    </span>
-    <span class="legend-filter" data-health="at-risk">
-      <span class="color-cell color-cell--orange">&nbsp;</span> At Risk
-      <span class="legend-stat"></span>
-    </span>
-    <span class="legend-filter" data-health="rejected">
-      <span class="color-cell color-cell--red">&nbsp;</span> Missed
-      <span class="legend-stat"></span>
-    </span>
-    <span class="legend-filter" data-health="added">
-      <span class="color-cell color-cell--blue">&nbsp;</span> Added
-      <span class="legend-stat"></span>
-    </span>
-    <span class="legend-filter" data-health="dropped">
-      <span class="color-cell color-cell--black">&nbsp;</span> Dropped
-      <span class="legend-stat"></span>
-    </span>
-    <span class="legend-filter" data-health="unknown">
-      <span class="color-cell color-cell--white">&nbsp;</span> Inactive
-      <span class="legend-stat"></span>
-    </span>
+  {% if selected_product %}
+  <div class="status-filter">
+    <div class="status-filter__head">
+      <span class="status-filter__label">Status</span>
+      {# Small screens only: collapses the status rows. #}
+      <button type="button" class="status-filter__toggle" id="status-toggle" aria-expanded="false" aria-controls="status-rows">
+        <span class="group__chev" aria-hidden="true"><svg viewBox="0 0 14 14" width="14" height="14"><path d="M4 3l6 4-6 4z" fill="currentColor"/></svg></span>
+        Status <span class="status-filter__active" id="status-active"></span>
+      </button>
+      <button type="button" class="link-button" id="status-clear" hidden>Clear</button>
+    </div>
+    <div class="status-filter__rows" id="status-rows">
+    {% for sid, slabel in statuses %}
+    <button type="button" class="status-filter__row" data-status="{{ sid }}" aria-pressed="false">
+      <span class="status-square" data-status="{{ sid }}" aria-hidden="true">{{ 'C' if sid == 'completed' }}</span>
+      <span>{{ slabel }}</span>
+      <span class="status-filter__count">0</span>
+    </button>
+    {% endfor %}
+    </div>
   </div>
+  {% endif %}
 
+  <span id="sync-indicator" class="sync-indicator" aria-label="Sync status">
+    <svg id="sync-icon" class="sync-icon sync-icon--none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+    </svg>
+    <span id="sync-label">…</span>
+    <span class="sync-tooltip" id="sync-tooltip">Loading sync info…</span>
+  </span>
 </aside>
 {% endblock %}
 
 {% block content %}
   {% if not selected_product %}
-    <div style="display: flex; align-items: center; justify-content: center; flex: 1; color: #999;">
-      <span style="font-size: .85rem;">Pick a product to view its roadmap.</span>
-    </div>
-  {% endif %}
+    <div class="empty-state empty-state--center">Pick a product to view its roadmap.</div>
+  {% else %}
 
   {# ── Macro for rendering an epic row ────────────────────────── #}
   {% macro epic_row(item) %}
@@ -116,64 +567,91 @@
     {% else %}
       {% set health_id = 'unknown' %}
     {% endif %}
-    <li class="epic-row" data-health="{{ health_id }}">
-      <span class="epic-row__carry-over">
+    {# Added items have no board column of their own: they sit under
+       In progress, or Completed once Jira labels them "C".
+       Dropped items share the Missed column. #}
+    {% if health_id == 'added' %}
+      {% set board_id = 'completed' if health_label == 'C' else 'in-progress' %}
+    {% elif health_id == 'dropped' %}
+      {% set board_id = 'rejected' %}
+    {% else %}
+      {% set board_id = health_id %}
+    {% endif %}
+    <li class="item" data-status="{{ health_id }}" data-board="{{ board_id }}">
+      <span class="status-square" data-status="{{ health_id }}" title="{{ dict(statuses)[health_id] }}">
+        <span aria-hidden="true">{{ health_label }}</span><span class="u-off-screen">{{ dict(statuses)[health_id] }}</span>
+      </span>
+      <a class="item__title" href="{{ item.url }}" target="_blank" rel="noopener">{{ item.title | truncate(120, True, '…') }}</a>
+      <span class="item__meta">
         {% if item.color_status and item.color_status.carry_over %}
-          <span class="carry-over-indicator" title="Times carried over from a previous cycle.">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+          <span class="carry-over" title="Times carried over from a previous cycle.">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
             {{ item.color_status.carry_over.count }}
           </span>
         {% endif %}
-      </span>
-      <span class="epic-row__health">
-        {% if item.color_status and item.color_status.health %}
-          <span class="color-cell color-cell--{{ item.color_status.health.color }}">
-            {{- item.color_status.health.get('label', '') -}}
-          </span>
-        {% endif %}
-      </span>
-      <span class="epic-row__summary">
-        <a href="{{ item.url }}" target="_blank" rel="noopener" class="jira-link summary-link">
-          {{ item.title | truncate(90, True, '…') }}
-          <i class="p-icon--external-link"></i>
-        </a>
+        <a class="item__jira" href="{{ item.url }}" target="_blank" rel="noopener" title="Open in Jira" aria-label="Open {{ item.title }} in Jira">↗</a>
       </span>
     </li>
   {% endmacro %}
 
-  {% if selected_product %}
-  <div class="product-header">
-    <span class="product-header__dept">{{ product_department }}</span>
-    <span class="product-header__name">{{ selected_product }}</span>
-  </div>
-  {% if not grouped_items %}
-    <div style="display: flex; align-items: center; justify-content: center; flex: 1; color: #999;">
-      <span style="font-size: .85rem;">No roadmap items match the current filters.</span>
+  <header class="page-header">
+    <div class="page-header__top">
+      <div>
+        <div class="page-header__dept">{{ product_department }}</div>
+        <h1 class="page-header__title">{{ selected_product }} <span class="page-header__cycle">· {{ selected_cycle }}</span></h1>
+      </div>
+      <div class="page-header__tools">
+        <input type="search" class="search" id="item-search" placeholder="Search items" aria-label="Search items" autocomplete="off" />
+        <div class="p-segmented-control">
+          <div class="p-segmented-control__list" role="tablist" aria-label="View">
+            <button class="p-segmented-control__button" role="tab" type="button" data-view="list"
+                    id="view-tab-list" aria-controls="list-view" aria-selected="true">List</button>
+            <button class="p-segmented-control__button" role="tab" type="button" data-view="board"
+                    id="view-tab-board" aria-controls="board-view" aria-selected="false" tabindex="-1">Board</button>
+          </div>
+        </div>
+      </div>
     </div>
-  {% endif %}
-  {% endif %}
-
-  {% for _cycle_name, objectives_map in grouped_items.items() %}
-    {% for objective_label, items in objectives_map.items() %}
-    <div class="objective-block">
-      <h4>
-        {{ objective_label }}
-        {% if objective_label in objective_urls %}
-          <a href="{{ objective_urls[objective_label] }}" target="_blank" rel="noopener" class="jira-link" title="Open in Jira">
-            <i class="p-icon--external-link"></i>
-          </a>
-        {% endif %}
-        <span class="p-badge">{{ items | length }}</span>
-      </h4>
-
-      <ul class="epic-list">
-        {% for item in items %}
-          {{ epic_row(item) }}
-        {% endfor %}
-      </ul>
+    <div class="summary">
+      <div class="seg-bar seg-bar--lg" id="summary-bar"></div>
+      <div class="summary__legend" id="summary-legend"></div>
     </div>
+  </header>
+
+  <div class="list-view" id="list-view" role="tabpanel" aria-labelledby="view-tab-list">
+    {% for _cycle_name, objectives_map in grouped_items.items() %}
+      {% for objective_label, items in objectives_map.items() %}
+      <section class="group">
+        <div class="group__head">
+          <button type="button" class="group__toggle" aria-expanded="true" aria-controls="group-{{ loop.index }}-{{ _cycle_name | e }}">
+            <span class="group__chev" aria-hidden="true"><svg viewBox="0 0 14 14" width="14" height="14"><path d="M4 3l6 4-6 4z" fill="currentColor"/></svg></span>
+            <span class="group__name">{{ objective_label }}</span>
+            <span class="group__count">{{ items | length }}</span>
+          </button>
+          <span class="group__spacer"></span>
+          <span class="seg-bar seg-bar--sm" aria-hidden="true"></span>
+          {% if objective_label in objective_urls %}
+            <a class="group__epic" href="{{ objective_urls[objective_label] }}" target="_blank" rel="noopener" title="Open objective in Jira">Objective ↗</a>
+          {% endif %}
+        </div>
+        <ul class="group__items" id="group-{{ loop.index }}-{{ _cycle_name | e }}">
+          {% for item in items %}
+            {{ epic_row(item) }}
+          {% endfor %}
+        </ul>
+      </section>
+      {% endfor %}
     {% endfor %}
-  {% endfor %}
+    <div class="list-end" id="list-end" {% if not grouped_items %}hidden{% endif %}>
+      <span class="list-end__mark" aria-hidden="true"></span>
+      <span>End of {{ selected_product }} · {{ selected_cycle }}</span>
+      <span class="list-end__mark" aria-hidden="true"></span>
+    </div>
+    <p class="empty-state" id="list-empty" {% if grouped_items %}hidden{% endif %}>No roadmap items match the current filters.</p>
+  </div>
+
+  <div class="board-view" id="board-view" role="tabpanel" aria-labelledby="view-tab-board" hidden></div>
+  {% endif %}
 {% endblock %}
 
 {% block scripts %}
@@ -389,85 +867,310 @@
     });
   })();
 
-  // ── Legend health-status filter ──────────────────────────────
+
+  // ── Roadmap view: status filter, search, summary, list/board ──
   (function() {
+    var listView = document.getElementById('list-view');
+    if (!listView) return;
+
+    var statuses = {{ statuses | tojson }};
+    // Board columns follow an item's lifecycle rather than the legend order.
+    // Added has no column; those items join In progress or Completed.
+    // Dropped items share the Missed column.
+    var boardColumns = ['unknown', 'in-progress', 'at-risk', 'completed', 'rejected'].map(function(id) {
+      var s = statuses.find(function(s) { return s[0] === id; });
+      return id === 'rejected' ? [id, 'Missed/Dropped'] : s;
+    });
+    var boardView = document.getElementById('board-view');
+    var listEmpty = document.getElementById('list-empty');
+    var search = document.getElementById('item-search');
+    var clearBtn = document.getElementById('status-clear');
+    var statusToggle = document.getElementById('status-toggle');
+    var statusActive = document.getElementById('status-active');
+    var statusRows = document.querySelectorAll('.status-filter__row');
+    var viewButtons = Array.prototype.slice.call(document.querySelectorAll('.p-segmented-control__button[data-view]'));
+    var groups = listView.querySelectorAll('.group');
+    var items = listView.querySelectorAll('.item');
     var activeFilters = new Set();
-    var legendItems = document.querySelectorAll('.legend-filter[data-health]');
-    var allRows = document.querySelectorAll('li[data-health]');
+    var VIEW_KEY = 'roadmap_view';
+    var currentIdx = null;  // index into `items` of the keyboard-highlighted row
 
-    function updateStats() {
-      // Count ALL rows per health status (ignores legend toggle visibility)
+    items.forEach(function(row, i) { row.setAttribute('data-idx', i); });
+
+    // Same markup as the server-rendered squares: Completed carries a "C".
+    function statusSquare(id, modifier) {
+      var sq = document.createElement('span');
+      sq.className = 'status-square' + (modifier ? ' ' + modifier : '');
+      sq.setAttribute('data-status', id);
+      sq.setAttribute('aria-hidden', 'true');
+      if (id === 'completed') sq.textContent = 'C';
+      return sq;
+    }
+
+    function countByStatus(rows) {
       var counts = {};
-      var total = 0;
-      legendItems.forEach(function(el) { counts[el.getAttribute('data-health')] = 0; });
+      rows.forEach(function(r) {
+        var s = r.getAttribute('data-status');
+        counts[s] = (counts[s] || 0) + 1;
+      });
+      return counts;
+    }
 
-      allRows.forEach(function(row) {
-        var hid = row.getAttribute('data-health');
-        if (counts[hid] !== undefined) counts[hid]++;
-        total++;
+    // Fill a segmented bar with one span per non-inactive status.
+    function renderSegments(bar, counts) {
+      bar.innerHTML = '';
+      statuses.forEach(function(s) {
+        var id = s[0];
+        if (id === 'unknown' || !counts[id]) return;
+        var seg = document.createElement('span');
+        seg.setAttribute('data-status', id);
+        seg.style.flex = counts[id];
+        seg.title = counts[id] + ' ' + s[1];
+        bar.appendChild(seg);
+      });
+    }
+
+    function renderSummary() {
+      var counts = countByStatus(items);
+      var total = items.length;
+      renderSegments(document.getElementById('summary-bar'), counts);
+
+      var legend = document.getElementById('summary-legend');
+      legend.innerHTML = '';
+      function add(text, cls) {
+        var el = document.createElement('span');
+        if (cls) el.className = cls;
+        el.textContent = text;
+        legend.appendChild(el);
+        return el;
+      }
+      add(total + (total === 1 ? ' item' : ' items'), 'summary__total');
+      add((total ? Math.round((counts.completed || 0) / total * 100) : 0) + '% complete');
+      statuses.forEach(function(s) {
+        if (s[0] === 'unknown' || !counts[s[0]]) return;
+        var el = add(' ' + counts[s[0]] + ' ' + s[1]);
+        el.insertBefore(statusSquare(s[0], 'status-square--sm'), el.firstChild);
       });
 
-      // Update each legend button's inline stat
-      legendItems.forEach(function(el) {
-        var hid = el.getAttribute('data-health');
-        var stat = el.querySelector('.legend-stat');
-        if (!stat) return;
-        var c = counts[hid] || 0;
-        var pct = total > 0 ? Math.round(c / total * 100) : 0;
-        stat.textContent = c + ' (' + pct + '%)';
+      statusRows.forEach(function(row) {
+        var n = counts[row.getAttribute('data-status')] || 0;
+        row.querySelector('.status-filter__count').textContent = n;
+        row.classList.toggle('is-empty', n === 0);
       });
+
+      groups.forEach(function(g) {
+        renderSegments(g.querySelector('.seg-bar--sm'), countByStatus(g.querySelectorAll('.item')));
+      });
+    }
+
+    function isVisible(row) {
+      var q = search.value.trim().toLowerCase();
+      var statusOk = activeFilters.size === 0 || activeFilters.has(row.getAttribute('data-status'));
+      var textOk = !q || row.querySelector('.item__title').textContent.toLowerCase().indexOf(q) !== -1;
+      return statusOk && textOk;
+    }
+
+    function renderBoard() {
+      boardView.innerHTML = '';
+      boardColumns.forEach(function(s) {
+        var cards = [];
+        items.forEach(function(row) {
+          if (row.getAttribute('data-board') === s[0] && isVisible(row)) cards.push(row);
+        });
+        if (!cards.length) return;
+
+        var col = document.createElement('div');
+        col.className = 'board-col';
+        col.setAttribute('data-status', s[0]);
+        var head = document.createElement('div');
+        head.className = 'board-col__head';
+        head.appendChild(statusSquare(s[0]));
+        head.appendChild(document.createTextNode(s[1]));
+        var count = document.createElement('span');
+        count.className = 'board-col__count';
+        count.textContent = cards.length;
+        head.appendChild(count);
+        col.appendChild(head);
+
+        cards.forEach(function(row) {
+          var src = row.querySelector('.item__title');
+          var card = document.createElement('div');
+          card.className = 'board-card';
+          card.setAttribute('data-idx', row.getAttribute('data-idx'));
+          card.setAttribute('data-status', row.getAttribute('data-status'));
+          var group = document.createElement('div');
+          group.className = 'board-card__group';
+          group.textContent = row.closest('.group').querySelector('.group__name').textContent;
+          var link = document.createElement('a');
+          link.className = 'board-card__title';
+          link.href = src.href;
+          link.target = '_blank';
+          link.rel = 'noopener';
+          link.textContent = src.textContent;
+          card.appendChild(group);
+          card.appendChild(link);
+          col.appendChild(card);
+        });
+        boardView.appendChild(col);
+      });
+      if (!boardView.children.length) {
+        var p = document.createElement('p');
+        p.className = 'empty-state';
+        p.textContent = 'No roadmap items match the current filters.';
+        boardView.appendChild(p);
+      }
     }
 
     function applyFilter() {
-      var filtering = activeFilters.size > 0;
-
-      // Toggle legend item styling
-      legendItems.forEach(function(el) {
-        var id = el.getAttribute('data-health');
-        if (filtering) {
-          el.classList.toggle('is-active', activeFilters.has(id));
-          el.classList.toggle('is-dimmed', !activeFilters.has(id));
-        } else {
-          el.classList.remove('is-active', 'is-dimmed');
-        }
+      statusRows.forEach(function(row) {
+        row.setAttribute('aria-pressed', activeFilters.has(row.getAttribute('data-status')) ? 'true' : 'false');
       });
+      clearBtn.hidden = activeFilters.size === 0;
+      statusActive.textContent = activeFilters.size ? '(' + activeFilters.size + ' selected)' : '';
 
-      // Show/hide table rows
-      allRows.forEach(function(row) {
-        if (!filtering || activeFilters.has(row.getAttribute('data-health'))) {
-          row.style.display = '';
-        } else {
-          row.style.display = 'none';
-        }
+      var anyVisible = false;
+      items.forEach(function(row) { row.hidden = !isVisible(row); });
+      groups.forEach(function(g) {
+        var visible = g.querySelectorAll('.item:not([hidden])').length;
+        g.hidden = visible === 0;
+        if (visible) anyVisible = true;
       });
+      listEmpty.hidden = anyVisible;
+      document.getElementById('list-end').hidden = !anyVisible;
 
-      // Update item counts in objective headers
-      document.querySelectorAll('.objective-block').forEach(function(ob) {
-        var rows = ob.querySelectorAll('li[data-health]');
-        var visible = 0;
-        rows.forEach(function(r) { if (r.style.display !== 'none') visible++; });
-        var badge = ob.querySelector('h4 .p-badge');
-        if (badge) badge.textContent = visible;
-
-        // Hide entire objective block if no items visible
-        ob.style.display = visible === 0 ? 'none' : '';
-      });
+      if (!boardView.hidden) renderBoard();
+      if (currentIdx !== null && items[currentIdx].hidden) setCurrent(null);
     }
 
-    legendItems.forEach(function(el) {
-      el.addEventListener('click', function() {
-        var id = el.getAttribute('data-health');
-        if (activeFilters.has(id)) {
-          activeFilters.delete(id);
-        } else {
-          activeFilters.add(id);
-        }
+    function setView(view) {
+      viewButtons.forEach(function(b) {
+        var selected = b.getAttribute('data-view') === view;
+        b.setAttribute('aria-selected', selected ? 'true' : 'false');
+        if (selected) b.removeAttribute('tabindex'); else b.setAttribute('tabindex', '-1');
+      });
+      listView.hidden = view !== 'list';
+      boardView.hidden = view !== 'board';
+      if (view === 'board') renderBoard();
+      if (currentIdx !== null) setCurrent(currentIdx, true);
+      try { localStorage.setItem(VIEW_KEY, view); } catch (e) {}
+    }
+
+    statusRows.forEach(function(row) {
+      row.addEventListener('click', function() {
+        var id = row.getAttribute('data-status');
+        if (activeFilters.has(id)) activeFilters.delete(id); else activeFilters.add(id);
         applyFilter();
       });
     });
+    statusToggle.addEventListener('click', function() {
+      var open = statusToggle.getAttribute('aria-expanded') !== 'true';
+      statusToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+    clearBtn.addEventListener('click', function() {
+      activeFilters.clear();
+      applyFilter();
+    });
+    search.addEventListener('input', applyFilter);
 
-    // Initial stats on page load
-    updateStats();
+    groups.forEach(function(g) {
+      var toggle = g.querySelector('.group__toggle');
+      var list = g.querySelector('.group__items');
+      toggle.addEventListener('click', function() {
+        var open = toggle.getAttribute('aria-expanded') !== 'true';
+        toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+        list.hidden = !open;
+        if (!open && currentIdx !== null && list.contains(items[currentIdx])) setCurrent(null);
+      });
+    });
+
+    // Segmented control follows the tabs pattern: ←/→ (and Home/End) move between tabs.
+    viewButtons.forEach(function(b, i) {
+      b.addEventListener('click', function() { setView(b.getAttribute('data-view')); });
+      b.addEventListener('keydown', function(e) {
+        var next = null;
+        if (e.key === 'ArrowRight') next = (i + 1) % viewButtons.length;
+        else if (e.key === 'ArrowLeft') next = (i - 1 + viewButtons.length) % viewButtons.length;
+        else if (e.key === 'Home') next = 0;
+        else if (e.key === 'End') next = viewButtons.length - 1;
+        if (next === null) return;
+        e.preventDefault();
+        viewButtons[next].focus();
+        setView(viewButtons[next].getAttribute('data-view'));
+      });
+    });
+
+    // ── Keyboard navigation: arrow keys move a highlight through items ──
+    function currentEl() {
+      if (currentIdx === null) return null;
+      var root = boardView.hidden ? listView : boardView;
+      return root.querySelector('[data-idx="' + currentIdx + '"]');
+    }
+
+    function setCurrent(idx, keepFocus) {
+      document.querySelectorAll('.is-current').forEach(function(el) { el.classList.remove('is-current'); });
+      currentIdx = idx;
+      var el = currentEl();
+      if (!el) { currentIdx = null; return; }
+      el.classList.add('is-current');
+      if (!keepFocus) el.querySelector('a').focus({ preventScroll: true });
+      el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
+
+    // Visible items in reading order (skips filtered rows and collapsed groups).
+    function visibleIn(root, selector) {
+      return Array.prototype.filter.call(root.querySelectorAll(selector), function(el) {
+        return el.offsetParent !== null;
+      });
+    }
+
+    function moveVertical(step) {
+      var pool = boardView.hidden
+        ? visibleIn(listView, '.item')
+        : visibleIn((currentEl() || boardView).closest('.board-col') || boardView, '.board-card');
+      if (!pool.length) return;
+      var pos = pool.indexOf(currentEl());
+      var next = pos === -1 ? (step > 0 ? 0 : pool.length - 1) : Math.min(Math.max(pos + step, 0), pool.length - 1);
+      setCurrent(+pool[next].getAttribute('data-idx'));
+    }
+
+    function moveColumn(step) {
+      var cols = Array.prototype.slice.call(boardView.querySelectorAll('.board-col'));
+      if (!cols.length) return;
+      var el = currentEl();
+      var col = el ? el.closest('.board-col') : null;
+      var colPos = col ? cols.indexOf(col) : -1;
+      var target = cols[Math.min(Math.max(colPos + step, 0), cols.length - 1)];
+      var cards = target.querySelectorAll('.board-card');
+      var row = el ? Array.prototype.indexOf.call(col.querySelectorAll('.board-card'), el) : 0;
+      setCurrent(+cards[Math.min(row, cards.length - 1)].getAttribute('data-idx'));
+    }
+
+    document.addEventListener('keydown', function(e) {
+      if (e.altKey || e.ctrlKey || e.metaKey) return;
+      var t = e.target;
+      if (t.matches('input, select, textarea, [contenteditable]')) return;
+      // ←/→ belong to the view tabs while one is focused; ↑/↓ still move through items.
+      if (t.matches('[role="tab"]') && /^(ArrowLeft|ArrowRight|Home|End|h|l)$/.test(e.key)) return;
+      var handled = true;
+      if (e.key === 'ArrowDown' || e.key === 'j') moveVertical(1);
+      else if (e.key === 'ArrowUp' || e.key === 'k') moveVertical(-1);
+      else if (!boardView.hidden && (e.key === 'ArrowRight' || e.key === 'l')) moveColumn(1);
+      else if (!boardView.hidden && (e.key === 'ArrowLeft' || e.key === 'h')) moveColumn(-1);
+      else if (e.key === 'Escape' && currentIdx !== null) { setCurrent(null); t.blur && t.blur(); }
+      else handled = false;
+      if (handled) e.preventDefault();
+    });
+
+    // Clicking a row makes it the current one, so arrows continue from there.
+    document.addEventListener('click', function(e) {
+      var el = e.target.closest('.item, .board-card');
+      if (el) setCurrent(+el.getAttribute('data-idx'));
+    });
+
+    renderSummary();
+    var savedView = null;
+    try { savedView = localStorage.getItem(VIEW_KEY); } catch (e) {}
+    if (savedView === 'board') setView('board');
   })();
 </script>
 {% endblock %}

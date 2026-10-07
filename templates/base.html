@@ -1,469 +1,208 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="shortcut icon"
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link
+      rel="shortcut icon"
       href="https://assets.ubuntu.com/v1/e6b1c303-COF%20favicon.ico"
-      type="image/x-icon">
-  <title>{% block title %}Roadmap{% endblock %}</title>
+      type="image/x-icon"
+    />
+    <title>{% block title %}Roadmap{% endblock %}</title>
 
-  <!-- Restore last filter selection when landing on bare "/" -->
-  <script>
-    (function() {
-      if (window.location.pathname === '/' && !window.location.search) {
-        var saved = localStorage.getItem('roadmap_last_selection');
-        if (saved) {
-          window.location.replace('/?' + saved);
+    <!-- Restore last filter selection when landing on bare "/" -->
+    <script>
+      (function () {
+        if (window.location.pathname === "/" && !window.location.search) {
+          var saved = localStorage.getItem("roadmap_last_selection");
+          if (saved) {
+            window.location.replace("/?" + saved);
+          }
+        }
+      })();
+    </script>
+
+    <!-- Vanilla Framework from CDN (newest build published on assets.ubuntu.com) -->
+    <link
+      rel="stylesheet"
+      href="https://assets.ubuntu.com/v1/vanilla-framework-version-4.34.0.min.css"
+    />
+
+    <style>
+      :root {
+        --text: #111;
+        --text-muted: #666;
+        --text-faint: #999;
+        --link: #06c;
+        --bg: #fff;
+        --bg-sidebar: #f7f7f7;
+        --bg-hover: #f5f5f5;
+        --bg-input: #f5f5f5;
+        --border: #e5e5e5;
+        --border-strong: #999;
+        --brand: #e95420;
+
+        --status-completed: #0e8420; /* same green as in-progress; the "C" label distinguishes it */
+        --status-in-progress: #0e8420; /* Vanilla positive green */
+        --status-at-risk: #ff9900;
+        --status-missed: #c7162b;
+        --status-added: #007aa6; /* original roadmap blue */
+        --status-dropped: #111;
+        --status-inactive: #fff;
+      }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        font-family:
+          Ubuntu,
+          -apple-system,
+          "Segoe UI",
+          sans-serif;
+        font-size: 16px;
+        line-height: 1.4;
+        color: var(--text);
+        background: var(--bg);
+        -webkit-font-smoothing: antialiased;
+      }
+      a {
+        color: var(--link);
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+      button,
+      input,
+      select {
+        font: inherit;
+      }
+
+      /* ── layout ─────────────────────────────────────────────────────── */
+      .layout {
+        display: grid;
+        grid-template-columns: 248px minmax(0, 1fr);
+        min-height: 100vh;
+      }
+      .layout-main {
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+      }
+
+      @media (max-width: 768px) {
+        .layout {
+          grid-template-columns: minmax(0, 1fr);
         }
       }
-    })();
-  </script>
+    </style>
 
-  <!-- Vanilla Framework from CDN -->
-  <link rel="stylesheet" href="https://assets.ubuntu.com/v1/vanilla-framework-version-4.21.0.min.css" />
-
-  <style>
-    body { margin: 0; padding: 0; }
-    .l-main { padding: 0; margin: 0; max-width: none; }
-
-    /* ── colour cells ───────────────────────────────────────────────── */
-    .color-cell {
-      width: 1.2rem;
-      height: 1.2rem;
-      border-radius: .15rem;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      vertical-align: middle;
-      border: 1px solid rgba(0, 0, 0, .15);
-      font-size: .65rem;
-      font-weight: 700;
-      line-height: 1;
-      color: #fff;
-      text-transform: uppercase;
-    }
-    .color-cell--green  { background-color: #0e8420; }
-    .color-cell--orange { background-color: #ff9900; }
-    .color-cell--red    { background-color: #c7162b; }
-    .color-cell--blue   { background-color: #007aa6; }
-    .color-cell--black  { background-color: #111; }
-    .color-cell--white  { background-color: #fff; border-color: #999; color: #666; }
-
-    /* ── carry-over indicator ─────────────────────────────────────── */
-    .carry-over-indicator {
-      display: inline-flex;
-      align-items: center;
-      gap: .15rem;
-      color: #7c5295;
-      font-size: .65rem;
-      font-weight: 600;
-      line-height: 1;
-      white-space: nowrap;
-    }
-    .carry-over-indicator svg {
-      width: .85rem;
-      height: .85rem;
-      flex-shrink: 0;
-    }
-
-    /* ── product header ─────────────────────────────────────────────── */
-    .product-header {
-      padding: .5rem 1.25rem .35rem;
-      position: sticky;
-      top: 0;
-      background: #fff;
-      z-index: 1;
-      border-bottom: 1px solid rgba(0, 0, 0, .1);
-    }
-    .product-header__dept {
-      display: block;
-      font-size: .65rem;
-      font-weight: 400;
-      color: #999;
-      text-transform: uppercase;
-      letter-spacing: .03em;
-    }
-    .product-header__name {
-      font-size: .95rem;
-      font-weight: 600;
-      color: #333;
-    }
-
-    /* ── objective block ────────────────────────────────────────────── */
-    .objective-block {
-      margin-bottom: .25rem;
-    }
-    .objective-block h4 {
-      display: flex;
-      align-items: center;
-      gap: .35rem;
-      margin: .3rem 1.25rem .25rem;
-      padding: 0 0 .15rem;
-      font-size: .8rem;
-      color: #555;
-      max-width: none;
-    }
-    .objective-block h4 .p-badge {
-      margin-left: 0;
-      background: #e5e5e5;
-      color: #888;
-      font-weight: 400;
-    }
-
-    /* ── compact epic rows (single-line flexbox) ────────────────────── */
-    .epic-list {
-      list-style: none;
-      margin: 0;
-      padding: 0 1.25rem;
-    }
-    .epic-row {
-      display: flex;
-      align-items: center;
-      gap: .2rem;
-      padding: .2rem 0;
-      font-size: .8rem;
-      line-height: 1.3;
-    }
-    .epic-row__carry-over {
-      flex: 0 0 2rem;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .epic-row__health {
-      flex: 0 0 1.4rem;
-      display: flex;
-      align-items: center;
-    }
-    .epic-row__summary {
-      flex: 1 1 auto;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      min-width: 0;
-    }
-    .epic-row__summary a.summary-link,
-    .epic-row__summary a.summary-link:visited,
-    .epic-row__summary a.summary-link:active {
-      display: inline-flex;
-      align-items: center;
-      gap: .25rem;
-      color: #000;
-      text-decoration: none;
-      max-width: 100%;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      opacity: 1;
-    }
-    .epic-row__summary a.summary-link:hover {
-      text-decoration: underline;
-    }
-    .summary-link .p-icon--external-link {
-      flex-shrink: 0;
-      opacity: .4;
-    }
-    .summary-link:hover .p-icon--external-link {
-      opacity: 1;
-    }
-    .jira-link {
-      margin-left: .35rem;
-      display: inline-flex;
-      align-items: center;
-      opacity: .5;
-    }
-    .jira-link:hover { opacity: 1; }
-
-    /* ── sidebar + main layout ───────────────────────────────────── */
-    .layout-sidebar-main {
-      display: flex;
-      min-height: 100vh;
-    }
-    a.clear-filters,
-    a.clear-filters:visited {
-      display: flex;
-      align-items: center;
-      margin-left: auto;
-      flex-shrink: 0;
-      color: #333;
-      text-decoration: none;
-      cursor: pointer;
-    }
-    .clear-filters:hover {
-      color: #c7162b;
-    }
-    .layout-sidebar {
-      display: flex;
-      flex-direction: column;
-      width: 14rem;
-      flex-shrink: 0;
-      padding: 0 1rem 1rem;
-      border-right: 1px solid rgba(0, 0, 0, .1);
-      background: #f7f7f7;
-      overflow-y: auto;
-      overflow-x: hidden;
-      position: sticky;
-      top: 0;
-      height: 100vh;
-    }
-    .layout-sidebar .p-form__group {
-      margin-bottom: .4rem;
-    }
-    .layout-sidebar label {
-      font-size: .8rem;
-      font-weight: 600;
-      margin-bottom: .15rem;
-    }
-    .layout-sidebar select,
-    .layout-sidebar input[type="text"] {
-      width: 100%;
-      font-size: .8rem;
-      margin-bottom: 0;
-    }
-    .layout-sidebar .sidebar-section-title {
-      font-size: .8rem;
-      font-weight: 600;
-      color: inherit;
-      margin: 2rem 0 .35rem;
-      padding-bottom: .2rem;
-    }
-    .layout-sidebar .legend-filter {
-      display: flex;
-      align-items: center;
-      gap: .3rem;
-      padding: .1rem 0;
-      font-size: .75rem;
-      cursor: pointer;
-      transition: opacity .15s, color .15s;
-      user-select: none;
-    }
-    .layout-sidebar .legend-filter:hover {
-      color: #007aa6;
-    }
-    .layout-sidebar .legend-filter.is-dimmed {
-      opacity: .35;
-    }
-    .layout-sidebar .legend-filter .color-cell {
-      width: 1rem;
-      height: 1rem;
-      line-height: 1rem;
-      font-size: .55rem;
-    }
-    .layout-sidebar .legend-filter .legend-stat {
-      margin-left: auto;
-      font-size: .6rem;
-      font-weight: 600;
-      color: #666;
-    }
-    .layout-main {
-      flex: 1;
-      min-width: 0;
-      padding: 0;
-      overflow-y: auto;
-      height: 100vh;
-      display: flex;
-      flex-direction: column;
-    }
-
-    /* ── typeahead ──────────────────────────────────────────────────── */
-    .typeahead {
-      position: relative;
-    }
-    .typeahead__input {
-      margin: 0;
-    }
-    .typeahead__list {
-      display: none;
-      position: absolute;
-      top: calc(100% - 1px);
-      left: 0;
-      right: 0;
-      max-height: 14rem;
-      overflow-y: auto;
-      background: #fff;
-      border: 1px solid #ccc;
-      border-top: none;
-      border-radius: 0 0 .2rem .2rem;
-      z-index: 50;
-      box-shadow: 0 2px 6px rgba(0,0,0,.1);
-    }
-    .typeahead__option {
-      padding: .25rem .5rem;
-      font-size: .75rem;
-      cursor: pointer;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    .typeahead__option:hover {
-      background: rgba(0, 122, 166, .1);
-    }
-    .typeahead__option.is-selected {
-      font-weight: 600;
-      color: #007aa6;
-    }
-    .typeahead__option.is-highlighted {
-      background: rgba(0, 122, 166, .15);
-    }
-
-    /* ── sidebar logo ────────────────────────────────────────────── */
-    .sidebar-logo.p-panel__header {
-      display: flex;
-      align-items: center;
-      margin: 0 0 .5rem;
-      padding: 0;
-    }
-    .sidebar-logo .p-navigation__tagged-logo {
-      flex: 1;
-      min-width: 0;
-    }
-
-    /* ── sync-status indicator (floating) ────────────────────────── */
-    .sync-indicator {
-      display: inline-flex;
-      align-items: center;
-      gap: .35rem;
-      cursor: default;
-      position: fixed;
-      top: .5rem;
-      right: .75rem;
-      z-index: 100;
-      padding: .25rem .5rem;
-      color: #666;
-      font-size: .75rem;
-      white-space: nowrap;
-    }
-    .sync-icon {
-      width: 1rem;
-      height: 1rem;
-      flex-shrink: 0;
-    }
-    .sync-icon--ok    { color: #0e8420; }
-    .sync-icon--stale { color: #e95420; }
-    .sync-icon--none  { color: #999; }
-    .sync-icon--fail  { color: #c7162b; }
-
-    .sync-tooltip {
-      display: none;
-      position: absolute;
-      top: 100%;
-      right: 0;
-      margin-top: .35rem;
-      background: #333;
-      color: #fff;
-      padding: .5rem .75rem;
-      border-radius: .25rem;
-      font-size: .75rem;
-      line-height: 1.5;
-      white-space: pre-wrap;
-      word-break: break-word;
-      max-width: 28rem;
-      z-index: 100;
-      box-shadow: 0 2px 6px rgba(0,0,0,.25);
-    }
-    .sync-indicator:hover .sync-tooltip { display: block; }
-  </style>
-
-  {% block head %}{% endblock %}
-</head>
-<body>
-
-  <span id="sync-indicator" class="sync-indicator" aria-label="Sync status">
-    <span id="sync-label">…</span>
-    <svg id="sync-icon" class="sync-icon sync-icon--none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">
-      <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
-    </svg>
-    <span class="sync-tooltip" id="sync-tooltip">Loading sync info…</span>
-  </span>
-
-  <main class="l-main">
-    <div class="layout-sidebar-main">
+    {% block head %}{% endblock %}
+  </head>
+  <body>
+    <div class="layout">
       {% block sidebar %}{% endblock %}
-      <div class="layout-main">
-        {% block content %}{% endblock %}
-      </div>
+      <main class="layout-main">{% block content %}{% endblock %}</main>
     </div>
-  </main>
 
-  {% block scripts %}{% endblock %}
+    {% block scripts %}{% endblock %}
 
-  <script>
-  /* ── Sync-status indicator ──────────────────────────────────── */
-  (function() {
-    function humanDuration(totalSeconds) {
-      if (totalSeconds == null) return '—';
-      var abs = Math.abs(totalSeconds);
-      if (abs < 120) return Math.round(abs) + ' min';
-      var h = abs / 3600;
-      if (h < 48) return h.toFixed(1) + ' h';
-      return (h / 24).toFixed(1) + ' d';
-    }
+    <script>
+      /* ── Sync-status indicator ──────────────────────────────────── */
+      (function () {
+        function humanDuration(totalSeconds) {
+          if (totalSeconds == null) return "—";
+          var abs = Math.abs(totalSeconds);
+          if (abs < 120) return Math.round(abs) + " min";
+          var h = abs / 3600;
+          if (h < 48) return h.toFixed(1) + " h";
+          return (h / 24).toFixed(1) + " d";
+        }
 
-    function refreshSync() {
-      fetch('/api/v1/sync/schedule')
-        .then(function(r) { return r.json(); })
-        .then(function(d) {
-          var icon  = document.getElementById('sync-icon');
-          var label = document.getElementById('sync-label');
-          var tip   = document.getElementById('sync-tooltip');
+        function refreshSync() {
+          fetch("/api/v1/sync/schedule")
+            .then(function (r) {
+              return r.json();
+            })
+            .then(function (d) {
+              var icon = document.getElementById("sync-icon");
+              var label = document.getElementById("sync-label");
+              var tip = document.getElementById("sync-tooltip");
+              if (!icon) return;
 
-          if (!d.configured || d.last_sync_end == null) {
-            icon.className = 'sync-icon sync-icon--none';
-            label.textContent = 'No sync yet';
-            tip.textContent   = 'The scheduler has not completed a sync yet.';
-            return;
-          }
+              if (!d.configured || d.last_sync_end == null) {
+                icon.className = "sync-icon sync-icon--none";
+                label.textContent = "No sync yet";
+                tip.textContent = "The scheduler has not completed a sync yet.";
+                return;
+              }
 
-          // Compute durations client-side from ISO timestamps so the
-          // display is always relative to the *browser* clock and immune
-          // to server ↔ client clock skew.
-          var nowMs   = Date.now();
-          var sinceSec = d.last_sync_end
-                         ? Math.round((nowMs - new Date(d.last_sync_end).getTime()) / 1000)
-                         : null;
-          var untilSec = d.next_sync_at
-                         ? Math.round((new Date(d.next_sync_at).getTime() - nowMs) / 1000)
-                         : null;
-          var sinceStr = humanDuration(sinceSec);
-          var untilStr = untilSec != null && untilSec > 0
-                         ? humanDuration(untilSec)
-                         : 'soon';
+              // Compute durations client-side from ISO timestamps so the
+              // display is always relative to the *browser* clock and immune
+              // to server ↔ client clock skew.
+              var nowMs = Date.now();
+              var sinceSec = d.last_sync_end
+                ? Math.round(
+                    (nowMs - new Date(d.last_sync_end).getTime()) / 1000,
+                  )
+                : null;
+              var untilSec = d.next_sync_at
+                ? Math.round(
+                    (new Date(d.next_sync_at).getTime() - nowMs) / 1000,
+                  )
+                : null;
+              var sinceStr = humanDuration(sinceSec);
+              var untilStr =
+                untilSec != null && untilSec > 0
+                  ? humanDuration(untilSec)
+                  : "soon";
 
-          if (d.last_sync_ok === false) {
-            icon.className = 'sync-icon sync-icon--fail';
-            label.textContent = 'Sync failed';
-          } else if (sinceSec != null && sinceSec > d.interval_seconds * 2) {
-            icon.className = 'sync-icon sync-icon--stale';
-            label.textContent = sinceStr + ' ago';
-          } else {
-            icon.className = 'sync-icon sync-icon--ok';
-            label.textContent = sinceStr + ' ago';
-          }
+              if (d.last_sync_ok === false) {
+                icon.className = "sync-icon sync-icon--fail";
+                label.textContent = "Sync failed";
+              } else if (
+                sinceSec != null &&
+                sinceSec > d.interval_seconds * 2
+              ) {
+                icon.className = "sync-icon sync-icon--stale";
+                label.textContent = sinceStr + " ago";
+              } else {
+                icon.className = "sync-icon sync-icon--ok";
+                label.textContent = sinceStr + " ago";
+              }
 
-          var lines = [];
-          lines.push('Last sync: ' + sinceStr + ' ago');
-          lines.push('Next sync: ' + untilStr);
-          lines.push('Interval: ' + humanDuration(d.interval_seconds));
-          if (d.last_sync_end) {
-            lines.push('Finished: ' + new Date(d.last_sync_end).toLocaleString());
-          }
-          if (d.error_message) {
-            lines.push('Error: ' + d.error_message);
-          }
-          tip.textContent = lines.join('\n');
-          tip.style.whiteSpace = 'pre';
-        })
-        .catch(function() {
-          document.getElementById('sync-icon').className = 'sync-icon sync-icon--none';
-          document.getElementById('sync-label').textContent = '—';
-        });
-    }
+              var lines = [];
+              lines.push("Last sync: " + sinceStr + " ago");
+              lines.push("Next sync: " + untilStr);
+              lines.push("Interval: " + humanDuration(d.interval_seconds));
+              if (d.last_sync_end) {
+                lines.push(
+                  "Finished: " + new Date(d.last_sync_end).toLocaleString(),
+                );
+              }
+              if (d.error_message) {
+                lines.push("Error: " + d.error_message);
+              }
+              tip.textContent = lines.join("\n");
+              tip.style.whiteSpace = "pre";
+            })
+            .catch(function () {
+              if (!document.getElementById("sync-icon")) return;
+              document.getElementById("sync-icon").className =
+                "sync-icon sync-icon--none";
+              document.getElementById("sync-label").textContent = "—";
+            });
+        }
 
-    refreshSync();
-    // Refresh every 60 s so the "ago" label stays current
-    setInterval(refreshSync, 60000);
-  })();
-  </script>
-</body>
+        refreshSync();
+        // Refresh every 60 s so the "ago" label stays current
+        setInterval(refreshSync, 60000);
+      })();
+    </script>
+  </body>
 </html>

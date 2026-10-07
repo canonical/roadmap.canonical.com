@@ -653,8 +653,8 @@ def test_roadmap_page_future_cycle_shows_inactive(client):
     resp = client.get("/", params={"product": "FutureProd", "cycle": "27.04"})
     assert resp.status_code == 200
     assert "Future item" in resp.text
-    # Item should be rendered as white/Inactive (check for the color-cell--white class)
-    assert "color-cell--white" in resp.text
+    # Item should be rendered as white/Inactive
+    assert 'class="item" data-status="unknown"' in resp.text
 
 
 def test_roadmap_page_future_badge(client):
